@@ -319,6 +319,28 @@ class TestTheQuestionIsRecognised:
         assert time.perf_counter() - started < 0.5
 
 
+class TestOnlyAnIdentityQuestionWidensTheScope:
+    """``_question_looks_on_scope`` picks the gap line over the off-topic line.
+    A question about who the company is addresses it with "you" alone, so it
+    counts; a locations or team question about someone else does not start to."""
+
+    @pytest.mark.parametrize("question", ["what kind of company are you", "what do you guys do", "who are you guys"])
+    def test_an_identity_question_is_on_scope(self, question):
+        assert rs._question_looks_on_scope(question, "Eventus Security") is True
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "hq of google",
+            "board of directors of tesla",
+            "leadership team of microsoft",
+            "whats nvidia's global presence",
+        ],
+    )
+    def test_another_companys_facts_are_not(self, question):
+        assert rs._question_looks_on_scope(question, "Eventus Security") is False
+
+
 class TestAnIdentityQuestionIsShort:
     """The whole-message identity patterns read a message with its whitespace
     collapsed, and only one short enough to be such a question."""
@@ -511,6 +533,30 @@ class TestThePinnedChunks:
         pinned = rs._company_fact_chunks(bot.client_id, bot.id, "who are you guys exactly", frozenset({"about"}))
 
         assert [doc.id for doc in pinned] == [mission.id, who.id, boilerplate[0].id, boilerplate[1].id]
+
+    def test_a_menu_or_footer_with_the_heading_words_is_not_a_description(self, db):
+        """A site menu lists "Our Story" and "What We Do", and a footer says
+        "Established 2017". Neither says what the company is, and the paragraph
+        that does may carry no such heading."""
+        bot = _make_bot(db, _make_client(db))
+        menu = _document(db, bot, _ABOUT_US, "Home About Us Our Story What We Do Why Choose Us Careers Book a Demo")
+        heading = _document(
+            db, bot, _ABOUT_US, "## Who We Are\nWe protect banks and telecoms from cyber attacks around the clock."
+        )
+        footer = _document(db, bot, _ABOUT_US, "Copyright 2024 Eventus. Established 2017. All rights reserved.")
+        prose = _document(
+            db,
+            bot,
+            _ABOUT_US,
+            "Eventus is a managed security services provider. We run 24x7 security operations centers "
+            "for banks and telecoms in 14 countries.",
+        )
+        sitemap = _document(db, bot, _ABOUT_US, "Founded in Ahmedabad. Sitemap Privacy Terms Cookies")
+
+        pinned = rs._company_fact_chunks(bot.client_id, bot.id, "who are you guys exactly", frozenset({"about"}))
+
+        assert [doc.id for doc in pinned] == [heading.id, prose.id, menu.id, footer.id]
+        assert sitemap.id not in [doc.id for doc in pinned]
 
     def test_an_identity_question_pins_nothing_without_an_about_page(self, db):
         bot = _make_bot(db, _make_client(db))

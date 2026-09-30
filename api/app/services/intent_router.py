@@ -260,7 +260,7 @@ _BOT_NAME_RE = re.compile(
     # guys", "who are you people", "who r u all" ask what the business is, and
     # the knowledge base answers that. Evaluation 2026-09-28: "who are you guys
     # exactly" got the bot-name line on both production bots.
-    r"|who\s+(?:are|r)\s+(?:you|u)(?!\s+(?:guys|people|all|lot|folks|team|company|as\s+a)\b)"
+    r"|who\s+(?:are|r)\s+(?:you|u)(?!,?\s+(?:guys|people|all|lot|folks|team|company|as\s+a)\b)"
     # "who am i talking to" and a bare "what are you", as the whole message only:
     # "what are you offering this month" is a question for the knowledge base.
     r"|^who\s+am\s+i\s+(?:talking|chatting|speaking)\s+(?:to|with)$"
@@ -280,6 +280,12 @@ _ASKS_ABOUT_BUSINESS_RE = re.compile(
     r"offer|offers|offering|provide|provides|sell|sells"
     r"|services?|products?|pricing|prices?|cost|costs|plans?"
     r"|what\s+do\s+you\s+do|what\s+does\s+(?:the\s+)?company|about\s+(?:the\s+)?company"
+    # The same question in other words. "who are you and what does your company
+    # do" got the bot-name line (review of 2026-09-30).
+    r"|what\s+do\s+(?:you|u)\s+(?:guys|people|all|folks)\s+do"
+    r"|what\s+does\s+(?:your|ur|this)\s+company|about\s+(?:your|ur|this)\s+company"
+    r"|(?:your|ur|this)\s+company\s+(?:all\s+)?about"
+    r"|(?:kind|sort|type)\s+of\s+(?:company|business|firm)"
     r")\b"
 )
 

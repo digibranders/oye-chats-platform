@@ -2357,8 +2357,8 @@ _IDENTITY_CLOSERS = r"(?:\s+(?:exactly|again|really|actually|anyway|though|then|
 _IDENTITY_TAIL = rf"{_IDENTITY_CLOSERS}\s*[?.!]*\s*$"
 _PLURAL_YOU_WORDS = r"(?:guys|people|all|lot|folks)"
 # The business addressed as a group, and "as a company" after either form.
-_US_AS_A_GROUP = rf"(?:(?:you|u)\s+{_PLURAL_YOU_WORDS}|y['’]?all)"
-_YOU_OR_US = rf"(?:(?:you|u)(?:\s+{_PLURAL_YOU_WORDS})?|y['’]?all)"
+_US_AS_A_GROUP = rf"(?:(?:you|u),?\s+{_PLURAL_YOU_WORDS}|y['’]?all)"
+_YOU_OR_US = rf"(?:(?:you|u)(?:,?\s+{_PLURAL_YOU_WORDS})?|y['’]?all)"
 _AS_A_COMPANY = r"\s+as\s+an?\s+(?:company|firm|business|organi[sz]ation|agency|team)"
 _COMPANY_NOUN = r"(?:company|firm|business|organi[sz]ation|agency)"
 _THIS_COMPANY = rf"(?:your|ur|this|the)\s+{_COMPANY_NOUN}"
@@ -2506,7 +2506,11 @@ def _identity_question_text(question: str) -> str | None:
 def _is_the_company_name(subject: str, company_name: str | None) -> bool:
     """True when ``subject`` is the company's name or its leading words, however
     spaced: "Eventus" and "Eventus Security" for Eventus Security, "clean start"
-    for CleanStart. "security" alone is a topic, not that company.
+    for CleanStart. A later word alone ("security") is a topic, not that company.
+
+    A name that opens with a topic ("Kubernetes Consulting Group") makes "what is
+    kubernetes" read as a question about the company. The cost is the about page
+    pinned ahead of the retrieved chunks; the turn was on scope by name already.
     """
     signals = _company_name_signals(company_name)
     if not signals or not company_name:
@@ -2600,10 +2604,10 @@ def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
             return True
     if _ON_SCOPE_HINTS_RE.search(question):
         return True
-    # A question about the company's own facts can address it with "you" alone
-    # ("what do you guys do", "what kind of company are you"), which the hints
-    # leave out on purpose.
-    if _asks_company_facts(question, company_name):
+    # A question about who the company is can address it with "you" alone ("what
+    # do you guys do", "what kind of company are you"), which the hints leave out
+    # on purpose. Only that kind: "hq of google" names someone else's office.
+    if "about" in _asks_company_facts(question, company_name):
         return True
     # No Latin words at all: the regex above was never able to speak for this
     # question, so its False is "unknown", not "off-scope". Fail soft.
@@ -3678,12 +3682,28 @@ _COMPANY_FACT_CONTENT_HINTS: dict[str, re.Pattern[str]] = {
     # The headings under which an about page says what the company is. "who are
     # you guys exactly" has no keyword to rank by, and both production about
     # pages open with four chunks of cookie notice and site menu (2026-09-30).
+    # Counted only in a chunk with a full sentence (``_has_a_full_sentence``).
     "about": re.compile(
         r"(?i)\b(?:who\s+we\s+are|what\s+we\s+do|why\s+choose\s+us"
         r"|our\s+(?:story|mission|vision|journey|history|purpose|values|core\s+values)"
         r"|founded|established|incorporated)\b"
     ),
 }
+
+
+#: The fewest words that make a sentence worth reading as a description. "All
+#: rights reserved." and "Established 2017." are three and two.
+_FULL_SENTENCE_MIN_WORDS = 8
+_SENTENCE_BREAK_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _has_a_full_sentence(content: str) -> bool:
+    """True when ``content`` holds a sentence of running text, which a cookie
+    banner's buttons, a site menu and a footer's link list do not."""
+    return any(
+        piece.rstrip().endswith((".", "!", "?")) and len(piece.split()) >= _FULL_SENTENCE_MIN_WORDS
+        for piece in _SENTENCE_BREAK_RE.split(content)
+    )
 
 
 def _company_fact_chunks(cid: int | None, bid: int | None, query: str, kinds: frozenset[str]) -> list:
@@ -3720,12 +3740,16 @@ def _company_fact_chunks(cid: int | None, bid: int | None, query: str, kinds: fr
         logger.warning("company-facts pinning failed for bot %s", bid, exc_info=True)
         return []
     hints = [_COMPANY_FACT_CONTENT_HINTS[kind] for kind in sorted(kinds) if kind in _COMPANY_FACT_CONTENT_HINTS]
+    # An address or a phone number is a fact in any shape. What a company is takes
+    # a sentence: a menu lists "Our Story" and "What We Do" and says neither.
+    wants_prose = kinds == {"about"}
 
-    def _order(item: tuple[int, tuple]) -> tuple[int, bool, float, int]:
+    def _order(item: tuple[int, tuple]) -> tuple[int, bool, bool, float, int]:
         index, (doc, rank) = item
         content = (getattr(doc, "content", None) or "")[:_COMPANY_FACTS_HINT_CHARS]
-        states_fact = any(hint.search(content) for hint in hints)
-        return (pages.get(doc.document_name, len(pages)), not states_fact, -rank, index)
+        prose = wants_prose and _has_a_full_sentence(content)
+        states_fact = any(hint.search(content) for hint in hints) and (prose or not wants_prose)
+        return (pages.get(doc.document_name, len(pages)), not states_fact, not prose, -rank, index)
 
     ordered = sorted(enumerate(rows), key=_order)
     return [doc for _index, (doc, _rank) in ordered[:COMPANY_FACTS_PIN_LIMIT]]
@@ -8307,6 +8331,10 @@ def _asks_which_business_this_is(question: str, company_name: str | None) -> boo
     """
     if not question:
         return False
+    # With its whitespace collapsed: both patterns backtrack over a long run of
+    # spaces (44 s on a 5,000 character message), and a run never changes what
+    # is asked.
+    question = " ".join(question.split())
     if _ASKS_WHICH_BUSINESS_RE.search(question):
         return True
     signals = _company_name_signals(company_name)

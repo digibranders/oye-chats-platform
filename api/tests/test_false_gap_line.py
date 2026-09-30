@@ -98,6 +98,12 @@ class TestAReferenceToAnEarlierTurn:
             "who are you guys " * 1200,
             "who are you " + "guys exactly again " * 1500,
             "who are you guys" + " " * 4980 + "x",
+            # Runs of spaces around the lead-in words and the either-or form: 44 s,
+            # 26 s and 2.6 s on a 5,000 character message before the patterns read
+            # the message with its whitespace collapsed.
+            "so" + " " * 2500 + "so" + " " * 2495 + "x",
+            "so" + " " * 2500 + "who are you guys" + " " * 2481 + "x",
+            "is this" + " " * 4992 + "x",
         ):
             rs._refers_to_an_earlier_turn(text)
             rs._asks_which_business_this_is(text, _COMPANY)
