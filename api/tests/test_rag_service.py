@@ -2056,7 +2056,9 @@ class TestBuildHistoryContext:
         history = [SimpleNamespace(role="user", content=long_content)]
         result = _build_history_context(history)
 
-        assert result.startswith("user: " + "x" * _HISTORY_MESSAGE_MAX_CHARS)
+        # One unbroken line has no line boundary to cut at, so it is cut hard
+        # at the cap; the note explaining the marker opens the block.
+        assert result.splitlines()[1] == "user: " + "x" * _HISTORY_MESSAGE_MAX_CHARS + " [truncated]"
         assert result.endswith("[truncated]")
         assert len(result) < len(long_content)
 

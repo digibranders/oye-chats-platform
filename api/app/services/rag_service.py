@@ -3084,8 +3084,26 @@ def _build_reference_context(final_results: list, company_name: str | None) -> s
 # rest of the session re-injected them in full. Compounding AR-19's
 # context-token budget on every later turn with content that's almost never
 # load-bearing for the conversation (a wall of pasted text, not a genuine
-# multi-thousand-char question).
-_HISTORY_MESSAGE_MAX_CHARS = 500
+# multi-thousand-char question). This is the VISITOR cap.
+_HISTORY_MESSAGE_MAX_CHARS = 800
+
+# The bot's own previous reply is load-bearing: "the last one", "tell me more
+# about the third", "summarise this" all point at it. Production, Eventus,
+# 2026-09-28 (y-e04-last-one): a 21-item service list cut at 500 characters
+# ended "- **Penetration T [truncated]", so the answer model took Penetration
+# Testing as the last item, while the query rewrite (which reads the rows
+# untruncated) had resolved it correctly. The same cut made a recap turn
+# rebuild the list from retrieved press releases and add services the bot never
+# mentioned. RULE 1 tells the model to give a very long list as a count plus
+# the main names, so a reply rarely nears this cap; it bounds a pathological
+# reply, not a normal one. Two replies at this cap plus three visitor turns at
+# theirs is about 2,100 tokens of history, all in the per-turn user message,
+# so the cached system prefix is unaffected.
+_HISTORY_REPLY_MAX_CHARS = 3000
+
+# First line of the history block whenever a message had to be cut, so the
+# model reads "[truncated]" as "this went on" rather than as the end of a list.
+_HISTORY_TRUNCATION_NOTE = "(a message ending in [truncated] continued beyond what is shown here)"
 
 
 # Stand-in written into the prompt in place of a visitor turn the injection
@@ -3095,9 +3113,34 @@ _HISTORY_MESSAGE_MAX_CHARS = 500
 _HISTORY_BLOCKED_PLACEHOLDER = "[message withheld: blocked by input safety check]"
 
 
+def _history_message_cap(role: str | None) -> int:
+    """The bot's replies get ``_HISTORY_REPLY_MAX_CHARS``; every other role,
+    the visitor's cap."""
+    return _HISTORY_REPLY_MAX_CHARS if role in ("bot", "assistant", "operator") else _HISTORY_MESSAGE_MAX_CHARS
+
+
+def _cut_at_line_boundary(content: str, cap: int) -> str:
+    """Cut ``content`` to at most ``cap`` characters on a line boundary.
+
+    The cut lands at the last newline within the cap, so a list is never left
+    mid-item (the model reads a half-written bullet as a complete one). When the
+    text has no usable line boundary in the first half of the cap (one unbroken
+    line), it is cut hard at the cap instead. Callers add the marker.
+    """
+    head = content[:cap]
+    boundary = head.rfind("\n")
+    if boundary >= cap // 2:
+        return head[:boundary].rstrip()
+    return head
+
+
 def _build_history_context(history: list) -> str:
-    """Join chat history into the ``role: content`` block used by the prompt,
-    truncating each message's content to ``_HISTORY_MESSAGE_MAX_CHARS`` first.
+    """Join chat history into the ``role: content`` block used by the prompt.
+
+    Each message is bounded by its role's cap (``_history_message_cap``), and a
+    message over its cap is cut at a line boundary with a ``[truncated]``
+    marker; the block then opens with ``_HISTORY_TRUNCATION_NOTE`` so the model
+    knows the marker means the message continued.
 
     Visitor turns that tripped :func:`is_visitor_injection_attempt` are replaced
     with ``_HISTORY_BLOCKED_PLACEHOLDER``. The guard runs AFTER the visitor's
@@ -3108,14 +3151,20 @@ def _build_history_context(history: list) -> str:
     every subsequent turn of the session defeats the guard entirely.
     """
     lines = []
+    truncated = False
     for m in history:
         content = m.content or ""
-        if _msg_role(m) == "user" and is_visitor_injection_attempt(content):
+        role = _msg_role(m)
+        if role == "user" and is_visitor_injection_attempt(content):
             lines.append(f"{m.role}: {_HISTORY_BLOCKED_PLACEHOLDER}")
             continue
-        if len(content) > _HISTORY_MESSAGE_MAX_CHARS:
-            content = content[:_HISTORY_MESSAGE_MAX_CHARS] + " [truncated]"
+        cap = _history_message_cap(role)
+        if len(content) > cap:
+            content = _cut_at_line_boundary(content, cap) + " [truncated]"
+            truncated = True
         lines.append(f"{m.role}: {content}")
+    if truncated:
+        lines.insert(0, _HISTORY_TRUNCATION_NOTE)
     return "\n".join(lines)
 
 
