@@ -6669,6 +6669,144 @@ def gap_team_offer(*, support_enabled: bool, live_chat_enabled: bool, within_bus
     return TEAM_MESSAGE_OFFER
 
 
+# ── What the visitor's CURRENT message already tells us ──────────────────────
+# The qualification extractor runs on the ARQ worker after the reply, so its
+# value for a dimension lands one turn late. Production, CleanStart,
+# 2026-09-28 (y-e22-timeline-reply): the visitor said "about 3 months" and the
+# prompt for that same turn still showed "Timeline: Not yet identified" and
+# asked for a timeline. These deterministic checks read the current message
+# for the dimension the block is about to ask, so the state can show it and
+# the question is not asked. They are conservative on purpose: a miss costs
+# one repeated question, a false hit costs one skipped question and a wrong
+# line in a per-turn prompt that nothing persists. A message opening with an
+# interrogative ("do you offer 12 months of support?") is never a statement.
+
+_MONTH_NAMES = (
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+    r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+)
+_SMALL_NUMBER_WORDS = r"a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple of|few|several"
+
+_TIMELINE_STATED_RE = re.compile(
+    r"(?i)(?:"
+    rf"\b(?:\d+|{_SMALL_NUMBER_WORDS})\s*(?:\+|-|to|or)?\s*(?:\d+\s*)?(?:days?|weeks?|months?|quarters?|years?)\b"
+    r"|\b(?:this|next|coming|end of (?:this|the|next)|by the end of (?:this|the|next))\s+(?:week|month|quarter|year)\b"
+    rf"|\bby\s+(?:early|mid|late|end of)?\s*(?:{_MONTH_NAMES})\b"
+    r"|\bq[1-4]\b"
+    r"|\b(?:asap|as soon as possible|immediately|right away|straight away|urgently)\b"
+    r"|\bno\s+(?:fixed|specific|particular|firm|set)?\s*(?:timeline|timeframe|time frame|deadline|rush)\b"
+    r")"
+)
+
+_ROLE_WORDS = (
+    r"(?:ceo|cto|cfo|coo|cio|ciso|cmo|founder|co-?founder|owner|director|head|vp|vice president|manager|"
+    r"lead|partner|president|principal|proprietor|decision[- ]maker|budget owner)"
+)
+_AUTHORITY_STATED_RE = re.compile(
+    r"(?i)(?:"
+    rf"\bi(?:'m| am)\s+(?:the|a|an|our|its|their)?\s*(?:[\w-]+\s+)?{_ROLE_WORDS}\b"
+    r"|\bi\s+(?:make|take|own|have)\s+the\s+(?:final\s+|buying\s+|purchasing\s+)?(?:decision|call|say)\b"
+    r"|\bi\s+(?:decide|sign off|approve)\b"
+    r"|\b(?:it'?s|that'?s)\s+my\s+(?:decision|call)\b"
+    r"|\bi(?:'m| am)\s+(?:just\s+)?(?:researching|looking|asking|checking|gathering|scoping)\b.*"
+    r"\b(?:for|on behalf of)\s+(?:my|our|the|a|someone)\b"
+    r"|\b(?:my|our|the)\s+(?:boss|manager|ceo|cto|cfo|director|team|board|founder|owner|partners?|committee)\b.*"
+    r"\b(?:decides?|will decide|makes? the (?:final\s+)?(?:decision|call)|has to (?:approve|sign off)|signs? off|approves?)\b"
+    r")"
+)
+
+_BUDGET_STATED_RE = re.compile(
+    r"(?i)(?:"
+    r"\bno\s+(?:fixed|set|specific|particular|firm|real)?\s*budget\b"
+    r"|\bbudget\s+(?:is|of|around|about|would be|is around|is about|sits at)\b"
+    r")"
+)
+
+# Framework dimension keys are configurable (BANT, MEDDIC, GPCT, ...), so a
+# dimension is matched to a detector by what its key names, not by an exact
+# key. Anything else (need, goals, metrics, ...) has no deterministic detector:
+# the visitor's need is whatever they are asking about.
+_DIMENSION_KIND_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("timeline", ("timeline", "timing", "timeframe", "time_frame", "schedule", "urgency")),
+    ("budget", ("budget", "money", "spend", "investment")),
+    ("authority", ("authority", "decision", "buyer", "role")),
+)
+
+# A short message is recorded whole ("about 3 months" reads better than
+# "3 months"); a long one is recorded by the span that stated the dimension.
+_STATED_VALUE_WHOLE_MESSAGE_WORDS = 15
+_STATED_VALUE_MAX_CHARS = 160
+
+
+def _dimension_kind(dimension: str) -> str | None:
+    key = (dimension or "").lower()
+    for kind, hints in _DIMENSION_KIND_HINTS:
+        if any(hint in key for hint in hints):
+            return kind
+    return None
+
+
+def _stated_value(question: str, span: str | None) -> str:
+    whole = " ".join(question.split())
+    if len(whole.split()) <= _STATED_VALUE_WHOLE_MESSAGE_WORDS:
+        return whole
+    return " ".join((span or whole).split())[:_STATED_VALUE_MAX_CHARS]
+
+
+def _current_turn_states_dimension(question: str, dimension: str) -> str | None:
+    """The value the visitor's current message gives for ``dimension``, or None.
+
+    Reuses ``_states_budget_amount`` (the money detector the scoring path uses)
+    for budget, plus phrase patterns for timeline, authority and a budget stated
+    without an amount. Returns the text to show in the qualification state.
+    """
+    q = (question or "").strip()
+    if not q or _QUESTION_LEAD_RE.match(q):
+        return None
+    kind = _dimension_kind(dimension)
+    if kind == "timeline":
+        match = _TIMELINE_STATED_RE.search(q)
+    elif kind == "authority":
+        match = _AUTHORITY_STATED_RE.search(q)
+    elif kind == "budget":
+        match = _BUDGET_STATED_RE.search(q)
+        if match is None and _states_budget_amount(q):
+            return _stated_value(q, None)
+    else:
+        return None
+    if match is None:
+        return None
+    return _stated_value(q, match.group(0))
+
+
+# A recap turn: the visitor wants this conversation summarised (for a boss, a
+# colleague, themselves). Production, CleanStart, 2026-09-28 (w-recap-for-boss):
+# "summarise this for my boss" got a qualifying question. A recap needs a verb
+# AND something that anchors it to the conversation, so "do you have a summary
+# of your services?" stays an ordinary product question.
+_RECAP_VERB_RE = re.compile(
+    r"(?i)\b(?:summari[sz]e|summary|recap|sum (?:it |this |that |everything |all |it all )?up|tl;?dr|rundown|wrap[- ]?up|overview)\b"
+)
+_RECAP_ANCHOR_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:this|that|our|the|whole|entire)\s+(?:chat|conversation|discussion|thread|exchange)\b"
+    r"|\bwhat we(?:'ve| have)?\s+(?:discussed|covered|talked about|said|gone over)\b"
+    r"|\b(?:everything|all)\s+(?:of\s+)?(?:this|that|so far|above|we(?:'ve| have)?\s+(?:discussed|covered|talked about))\b"
+    r"|\bso far\b"
+    r"|\bfor my (?:boss|manager|team|ceo|cto|director|colleagues?|lead|head|client)\b"
+    r"|\b(?:summari[sz]e|recap|sum up)\s+(?:this|that|it|everything|all this|all that)\b"
+    r"|\bsum (?:it|this|that|everything|it all|all this|all that) up\b"
+    r"|^\s*tl;?dr\s*[?!.]*\s*$"
+    r")"
+)
+
+
+def _is_recap_turn(question: str) -> bool:
+    """True when the visitor asks for a summary or recap of this conversation."""
+    q = question or ""
+    return bool(_RECAP_VERB_RE.search(q) and _RECAP_ANCHOR_RE.search(q))
+
+
 def build_hybrid_prompt(
     client,
     question: str,
@@ -6744,6 +6882,15 @@ def build_hybrid_prompt(
     # opinion (``field_question``) let it through. Adds one per-turn line
     # telling the model to explain the concept and say whether we offer it.
     field_question: bool = False,
+    # The team has been alerted to an urgent incident in this conversation
+    # (``urgent_followup.is_urgent_session``). No qualifying question on any
+    # later turn of the session: an incident is not a sales moment. Production,
+    # 2026-09-28 (x-urgent-do-you-handle): the flag never reached the prompt,
+    # so the turn after an incident report ended "How urgent is this right now?".
+    urgent_session: bool = False,
+    # The visitor asked for a summary or recap of the conversation
+    # (``_is_recap_turn``). Same hold (production, 2026-09-28, w-recap-for-boss).
+    recap_turn: bool = False,
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -6758,6 +6905,22 @@ def build_hybrid_prompt(
 
     qualification_section = ""
     if bant_enabled:
+        # What the visitor's CURRENT message already answers. The extractor's
+        # value lands a turn late (it runs on the worker after the reply), so
+        # without this the state showed "Not yet identified" for the very
+        # dimension the visitor had just given, and the block asked it again.
+        # A stored value always wins; only an open dimension is filled in, and
+        # only in this turn's copy of the state (nothing is persisted here).
+        stated_now: dict[str, str] = {}
+        for dim in conversation_order:
+            if bs.get(dim):
+                continue
+            stated = _current_turn_states_dimension(question, dim)
+            if stated:
+                stated_now[dim] = stated
+        if stated_now:
+            bs = {**bs, **stated_now}
+
         # Build score-aware qualification state for the prompt's status block.
         state_lines = []
         for dim in conversation_order:
@@ -6767,7 +6930,10 @@ def build_hybrid_prompt(
             score = int(bs.get(f"{dim}_score", 0) or 0)
             value = bs.get(dim) or "Not yet identified"
             label = dim_cfg.get("label") or dim.replace("_", " ").title()
-            state_lines.append(f"- {label}: {value} (score: {score}/{max_score})")
+            if dim in stated_now:
+                state_lines.append(f"- {label}: {value} (stated in the visitor's latest message; not yet scored)")
+            else:
+                state_lines.append(f"- {label}: {value} (score: {score}/{max_score})")
 
         state_text = "\n".join(state_lines)
 
@@ -6783,13 +6949,26 @@ def build_hybrid_prompt(
         if not probe_ok:
             next_dim_to_probe = None
 
+        # Session-level holds: an incident or a recap is not a sales moment.
+        # Nothing qualifying is asked and no CTA chips are offered either.
+        probe_hold_reason = ""
+        if urgent_session:
+            probe_hold_reason = (
+                "the visitor reported an urgent incident earlier in this conversation and the team has been alerted"
+            )
+        elif recap_turn:
+            probe_hold_reason = "the visitor asked for a summary or recap of this conversation"
+        if probe_hold_reason:
+            next_dim_to_probe = None
+
         # Build CTA instruction if any dimension has CTA enabled
         cta_dims = []
-        for dim in missing_dims:
-            dim_config = config.get(dim, {})
-            if dim_config.get("cta_enabled", False):
-                options = [o["label"] for o in dim_config.get("options", [])]
-                cta_dims.append(f"  - {dim}: options = {options}")
+        if not probe_hold_reason:
+            for dim in missing_dims:
+                dim_config = config.get(dim, {})
+                if dim_config.get("cta_enabled", False):
+                    options = [o["label"] for o in dim_config.get("options", [])]
+                    cta_dims.append(f"  - {dim}: options = {options}")
 
         cta_instruction = ""
         if cta_dims:
@@ -6929,6 +7108,13 @@ Eligible dimensions (use the exact dimension key, lowercase):
                 "this. Keep it to one or two short sentences and end on a warm "
                 "note, never a question mark."
             )
+        elif probe_hold_reason:
+            probing_instruction = (
+                f"Do NOT ask a qualifying question this turn: {probe_hold_reason}. "
+                "This is not a sales moment. Answer what they asked, from the "
+                "REFERENCE INFORMATION and the CONVERSATION HISTORY, and end on a "
+                "statement, with no next-step pitch."
+            )
         elif not next_dim_to_probe:
             probing_instruction = (
                 "Do NOT ask a qualifying question this turn: what you need is "
@@ -6939,6 +7125,7 @@ Eligible dimensions (use the exact dimension key, lowercase):
             )
         elif has_prior_turns:
             probing_instruction = f"""The conversation is underway. Answer the visitor's question FIRST, then close with ONE natural follow-up about their **{next_dim_to_probe.upper()}**.
+- FIRST CHECK: if their latest message or the CONVERSATION HISTORY already gives their {next_dim_to_probe.upper()}, do not ask it. Acknowledge it in one clause and ask nothing this turn.
 - THE REFLECTION IS OPTIONAL AND USUALLY WRONG. You may open with one short sentence that reflects something concrete the visitor just said (a fact, number, tool, goal or pain), for example "Two months is a comfortable runway for this." If their latest message is a greeting, a bare question, their name, or their contact details, there is NOTHING to reflect: skip it and open with the answer. Never invent feelings, and never open with a manufactured line ("Doing well, Eva.", "Thanks for sharing that.").
 - NEVER reflect something YOU said. "You mentioned" and "you said" describe the visitor's own words only.
 - If their latest message answered or updated what you were tracking, acknowledge it (they said "2 months", then "one week": "Even sooner, a week works well.") and never re-ask it.
@@ -6992,8 +7179,8 @@ Answering the visitor's question comes first. Qualification is secondary, but su
 {probing_instruction}
 
 UNIVERSAL RULES:
+- Never ask about something the visitor already told you, in this message or earlier in the conversation. This outranks the dimension named above: when their latest message answers it, acknowledge it and ask nothing.
 - At most ONE qualifying question per reply, after the answer, never before it, and never framed as a survey or checklist.
-- Never ask about something the visitor already told you.
 - The closure rule above always wins: after a closure message, ask nothing.
 - ROLE ACKNOWLEDGMENT: only when the visitor states their own job title or says they make the buying decision, acknowledge exactly what they said in one short clause before the answer, once per conversation, in your own words. Never say they approve or sign off unless they said so, and never read a role into a company type, a task or a form. Do not invent team roles, programmes or processes to go with it.
 - Order to ask in: {", ".join(d.upper() for d in conversation_order)}
@@ -11774,6 +11961,11 @@ async def rag_pipeline_stream(
                 visitor_country=visitor_country,
                 language=language,
                 credential_block=_credential_block,
+                # Session-level holds on the qualifying question: the team has
+                # been alerted to an incident in this conversation, or this turn
+                # asks for a recap of it. See ``build_hybrid_prompt``.
+                urgent_session=urgent_followup.is_urgent_session(chat_session),
+                recap_turn=_is_recap_turn(question),
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
