@@ -73,11 +73,16 @@ _ANY_NOUN = rf"(?:{_FILE_NOUNS}|pdfs?|catalog(?:ue)?s?|decks?)"
 #: What ``mentions_document`` listens for: the nouns above, a bare deck (a patio deck is
 #: the classifier's to rule out), and the other documents a business hands out: a
 #: lookbook, a prospectus, a floor plan, a menu, a guide, a manual, a syllabus, a
-#: timetable, and a firm, business or corporate profile. Not a rate card or a price
-#: list: those are pricing questions, and the pricing gate answers them.
+#: timetable, a report, and a firm, business or corporate profile, and "download"
+#: itself ("any report i can download"). Not a rate card or a price list: those
+#: are pricing questions, and the pricing gate answers them. Evaluation
+#: 2026-09-28 (y-e14-breach-report): "do you have any report on data breach
+#: costs i can download" named no noun here, so the route never ran and the
+#: model attached an off-topic card.
 _MENTION_RE = re.compile(
     rf"\b(?:{_FILE_NOUNS}|pdfs?|catalog(?:ue)?s?|decks?|lookbooks?|prospectus(?:es)?|floor\s*plans?|menus?"
-    r"|guides?|manuals?|syllab(?:us(?:es)?|i)|time\s?tables?|(?:firm|business|corporate)\s+profiles?)\b",
+    r"|guides?|manuals?|syllab(?:us(?:es)?|i)|time\s?tables?|reports?|downloads?"
+    r"|(?:firm|business|corporate)\s+profiles?)\b",
     re.IGNORECASE,
 )
 
@@ -712,7 +717,7 @@ _KINDS: tuple[tuple[str, re.Pattern[str] | None, re.Pattern[str]], ...] = tuple(
         ("ebook", r"\be-?books?\b", r"(?<!fac)e[\W_]*book"),
         # A "Risk Profile Assessment" is not the company's profile.
         ("company profile", r"company\s+profile", r"company[\W_]*profile"),
-        ("report", None, r"report"),
+        ("report", r"\breports?\b", r"report"),
     )
 )
 #: Asks for the company as a whole, answered by a profile-like file when the
@@ -720,6 +725,12 @@ _KINDS: tuple[tuple[str, re.Pattern[str] | None, re.Pattern[str]], ...] = tuple(
 _GENERIC_KINDS = frozenset({"brochure", "company profile"})
 #: File names that describe the whole company.
 _PROFILE_RE = re.compile(r"brochure|company[-_ ]?profile|overview|capabilit|corporate", re.IGNORECASE)
+#: Kinds that describe an offering, offered as the nearest thing to a brochure
+#: when the catalog has no profile-like file. Evaluation 2026-09-28
+#: (y-d4-brochure-and-call, both bots): "pls share a brochure" on catalogs of
+#: datasheets got "I don't have a downloadable document". A case study, a
+#: report or a whitepaper is plainly something else and is never offered for it.
+_OVERVIEW_KINDS = frozenset({"datasheet", "spec sheet", "one-pager"})
 #: Words that say how a document is asked for, never which one. Includes
 #: greetings, politeness and filler that name no document either: "thanks!
 #: could you email me the brochure" and "hey guys send me your brochure" must
@@ -1326,7 +1337,24 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
     profiles = sorted((f for f in files if f.profile_like), key=rank) if generic else []
     if profiles:
         return _offer(profiles[0], profiles[1:], exact=False, limit=limit)
+    overviews = sorted((f for f in files if f.kinds & _OVERVIEW_KINDS), key=rank) if generic else []
+    if overviews:
+        return _offer(overviews[0], overviews[1:], exact=False, limit=limit)
     return DocumentPick(docs=[], exact=False)
+
+
+def names_a_topic(question: object, company_name: str | None) -> bool:
+    """Whether the message carries a topic word of its own, read as ``pick_documents`` reads it.
+
+    "is there a pdf of this" and "send me the datasheet" name none: their topic
+    is in the conversation, so the route reads the search rewrite and the
+    earlier visitor turns for it. Contact details, a self-introduction, the
+    channel, the company's own words and the document words themselves do not
+    count. Pure and linear.
+    """
+    text = _without_contacts(question if isinstance(question, str) else "")
+    company = _terms(company_name)
+    return bool(_question(text, company, []).words)
 
 
 #: A hash or id in a file name, "68d65d47051e1b0ca7a66228" or "29330f6b": noise to a reader.

@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from app.services import credential_facts
+from app.services import credential_facts, document_request
 from app.services import rag_service as rs
 from tests.test_rag_pipeline_defects import (
     _answer_text,
@@ -134,6 +134,14 @@ def _streaming(captured, answer: str):
         yield answer
 
     return fake_stream
+
+
+@pytest.fixture(autouse=True)
+def document_classifier(monkeypatch):
+    """ "report" is a document noun, so "share your SOC 2 type 2 report" asks the
+    document classifier, a model call. It says no here: these tests are about
+    the credential-facts block in the prompt, not the document route."""
+    monkeypatch.setattr(document_request, "_classify_document_request_raw", lambda _question: "no")
 
 
 @pytest.mark.asyncio

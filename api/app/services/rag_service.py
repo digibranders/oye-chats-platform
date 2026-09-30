@@ -80,6 +80,7 @@ from app.services.document_request import (
     fallback_document_intent,
     looks_like_a_document_request,
     mentions_document,
+    names_a_topic,
     pick_documents,
     refers_back,
 )
@@ -1455,9 +1456,10 @@ def _referred_documents(
     The download card the last reply carried, with its chip, is the file "this"
     points at (evaluation, 2026-09-17: a turn after a card was attached answered
     "I don't have a downloadable document for that here"). A last reply without
-    one leaves the topic of the visitor's previous message, whose files are
-    picked as that message would have picked them. ``history`` ends with the
-    current message.
+    one leaves the topic of the nearest earlier visitor message that names one,
+    whose files are picked as that message would have picked them: an "ok" or
+    an earlier "is there a pdf of this" in between names nothing and is walked
+    past. ``history`` ends with the current message.
     """
     earlier = list(history or [])[:-1]
     last_bot = next((m for m in reversed(earlier) if _msg_role(m) == "bot"), None)
@@ -1473,11 +1475,13 @@ def _referred_documents(
         )
         if docs:
             return DocumentPick(docs=docs[:2], exact=True)
-    previous = next((m for m in reversed(earlier) if _msg_role(m) == "user"), None)
-    if previous is None:
-        return None
-    pick = pick_documents(_msg_content(previous), company_name, catalog)
-    return pick if pick.docs else None
+    for previous in (m for m in reversed(earlier) if _msg_role(m) == "user"):
+        content = _msg_content(previous)
+        if not names_a_topic(content, company_name):
+            continue
+        pick = pick_documents(content, company_name, catalog)
+        return pick if pick.docs else None
+    return None
 
 
 def _owned_bot_catalog(session, bot_id: int, owned: frozenset[str]) -> list[dict]:
@@ -10911,10 +10915,20 @@ async def rag_pipeline_stream(
                 if bid is not None:
                     _bot_catalog = _owned_bot_catalog(session, bid, _owned_media)
                 _pick = pick_documents(question, _company_name, _bot_catalog or [])
-                # "is there a pdf of this i can share with my boss" names no topic of
-                # its own: it means the file the last reply carried, or the topic of
-                # the visitor's previous message.
-                if _prior_turns and refers_back(question) and not (_pick.docs and _pick.exact):
+                _topic_named = names_a_topic(question, _company_name)
+                # "send me the datasheet" names no topic of its own. The search
+                # rewrite carries the one the conversation gave it ("Acme red
+                # teaming datasheet"), and its exact pick beats a guess from the
+                # bare kind.
+                if not _topic_named and _gate_question != question and names_a_topic(_gate_question, _company_name):
+                    _rewrite_pick = pick_documents(_gate_question, _company_name, _bot_catalog or [])
+                    if _rewrite_pick.docs and (_rewrite_pick.exact or not _pick.docs):
+                        _pick = _rewrite_pick
+                # "is there a pdf of this i can share with my boss" points back: it
+                # means the file the last reply carried, or the topic of the nearest
+                # earlier visitor message that names one. A request naming no topic
+                # is read the same way.
+                if _prior_turns and (refers_back(question) or not _topic_named) and not (_pick.docs and _pick.exact):
                     _pick = _referred_documents(history, _company_name, _bot_catalog or [], _owned_media) or _pick
                 # A pricing question belongs to the pricing gate, whichever way the
                 # gate went. "can you send me your pricing pdf?" on a bot with a
@@ -11087,6 +11101,10 @@ async def rag_pipeline_stream(
                     _doc_text = f"{_doc_text} {_doc_meeting_pivot.text}"
                 # The reply is fixed text, so it is saved BEFORE the first frame:
                 # a visitor who closes the tab mid-stream still leaves it behind.
+                # The cards are saved with it, as the generated path saves its
+                # own, so the next "is there a pdf of this?" finds the file
+                # (evaluation 2026-09-28, y-d8-pdf-asked-twice: the message was
+                # saved without them and the third turn denied the file).
                 _bot_msg = add_chat_message(
                     session,
                     session_id,
@@ -11094,6 +11112,8 @@ async def rag_pipeline_stream(
                     role="bot",
                     content=_doc_text,
                     bot_id=bid,
+                    media_card=_pick.docs[0] if _pick.docs else None,
+                    media_secondary=_pick.docs[1:] if len(_pick.docs) > 1 else None,
                     is_unanswered=not _pick.docs,
                     source_language=_lang_base(language),
                 )

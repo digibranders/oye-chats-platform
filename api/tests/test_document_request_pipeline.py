@@ -16,7 +16,7 @@ import time
 import pytest
 
 from app.db.models import ChatSession
-from app.services import document_request
+from app.services import document_request, price_intent
 from app.services import rag_service as rs
 from app.services.document_request import TOPIC_MIN_OVERLAP, DocumentIntentDecision
 from app.services.intent_router import route_intent as real_route_intent
@@ -1067,3 +1067,172 @@ async def test_a_turn_that_asks_for_no_time_gets_no_booking_card_from_the_safety
     frames = await _drive_stream(bot, "call center services chahiye", "hinglish-no-booking")
 
     assert "show_booking" not in _final_meta(frames)
+
+
+# ── The route records the card it sent and picks better files ────────────────
+# Evaluation 2026-09-28: y-d8-pdf-asked-twice, y-d4-brochure-and-call, y-e14-breach-report.
+
+SOC = "https://acme.com/files/SOC-as-a-Service-Datasheet.pdf"
+BREACH_REPORT = "https://acme.com/files/cost-of-a-data-breach-2025-full-report.pdf"
+PDF_OF_THIS = "is there a pdf of this?? need to fwd to my boss"
+
+
+@pytest.mark.asyncio
+async def test_the_route_saves_its_card_so_the_next_pdf_of_this_finds_it(db, monkeypatch, classifier):
+    """y-d8-pdf-asked-twice (CleanStart): the route saved its message without the
+    card, so the next "is there a pdf of this?" found no file and denied one."""
+    bot = _bot(db, "docs-persisted")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(monkeypatch, CATALOG)
+    classifier.answer = "send"
+
+    first = await _drive_stream(bot, DATASHEET_REQUEST, "docs-persisted")
+    saved = _messages(db, "docs-persisted", role="bot")[-1]
+    assert saved.media_card == {"type": "download", "url": RED, "name": "Red-Teaming.pdf"}
+    assert not saved.media_secondary
+
+    frames = await _drive_stream(bot, PDF_OF_THIS, "docs-persisted")
+
+    meta = _final_meta(frames)
+    assert meta["media_card"]["url"] == RED, _answer_text(frames)
+    assert _answer_text(frames).endswith("Here you go: **Red Teaming** is ready to download below.")
+    assert "don't have a downloadable document" not in _answer_text(frames)
+    assert _final_meta(first)["media_card"]["url"] == RED
+    assert cap["prompts"] == []
+    assert _messages(db, "docs-persisted", role="bot")[-1].media_card["url"] == RED
+
+
+@pytest.mark.asyncio
+async def test_a_second_file_is_saved_as_the_chip(db, monkeypatch, classifier):
+    bot = _bot(db, "docs-persisted-chip")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    _catalog(
+        monkeypatch,
+        [
+            {
+                "files": [
+                    {"url": RED, "name": "Red-Teaming.pdf"},
+                    {"url": RED_DATASHEET, "name": "Red-Teaming-Datasheet.pdf"},
+                ]
+            }
+        ],
+    )
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, "send me your red teaming pdfs", "docs-persisted-chip")
+
+    meta = _final_meta(frames)
+    saved = _messages(db, "docs-persisted-chip", role="bot")[-1]
+    assert saved.media_card == meta["media_card"]
+    assert saved.media_secondary == meta["media_secondary"]
+    assert {c["url"] for c in (saved.media_card, *saved.media_secondary)} == {RED, RED_DATASHEET}
+    assert len(saved.media_secondary) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_brochure_and_a_call_on_a_datasheet_only_catalog_get_the_datasheet_and_the_booking(
+    db, monkeypatch, classifier
+):
+    """y-d4-brochure-and-call (both bots): "brochure" matched nothing when the
+    catalog held only datasheets, so the reply denied any document."""
+    bot = _scheduler(monkeypatch, db, "docs-brochure-call", live_chat_enabled=True)
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs a SOC."),), support=True)
+    _catalog(monkeypatch, [{"files": [{"url": SOC, "name": "SOC-as-a-Service-Datasheet.pdf"}]}])
+    classifier.answer = "send"
+
+    frames = await _drive_stream(
+        bot, "pls share a brochure and also set up a call with ur team thursday afternoon", "docs-brochure-call"
+    )
+
+    meta = _final_meta(frames)
+    assert meta["media_card"]["url"] == SOC
+    assert meta["show_booking"] is True
+    assert _answer_text(frames).endswith(
+        "I don't have that exact document, but **SOC as a Service Datasheet** is available to download below. "
+        "You can also pick a time with the team below."
+    )
+    assert cap["prompts"] == []
+    assert _messages(db, "docs-brochure-call", role="bot")[-1].media_card["url"] == SOC
+
+
+@pytest.mark.asyncio
+async def test_a_report_request_reaches_the_route_and_gets_the_report(db, monkeypatch, classifier):
+    """y-e14-breach-report: "report" was not a document noun, so the route never
+    ran and the model attached an off-topic card."""
+    bot = _bot(db, "docs-report")
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Breaches cost money."),), support=True)
+    # "breach" passes the urgent vocabulary and "costs" the price vocabulary; in
+    # production both classifiers said no on this message.
+    monkeypatch.setattr(rs.urgent_route, "_classify_urgent_incident_raw", lambda _q: False)
+    monkeypatch.setattr(price_intent, "_classify_price_intent_raw", lambda _q: "no")
+    _catalog(
+        monkeypatch,
+        [
+            {
+                "files": [
+                    {"url": RED, "name": "Red-Teaming.pdf"},
+                    {"url": BREACH_REPORT, "name": BREACH_REPORT.rsplit("/", 1)[-1]},
+                ]
+            }
+        ],
+    )
+    classifier.answer = "exists"
+
+    frames = await _drive_stream(bot, "do you have any report on data breach costs i can download", "docs-report")
+
+    assert classifier.calls, "the noun check passed the message to the classifier"
+    meta = _final_meta(frames)
+    assert meta["media_card"]["url"] == BREACH_REPORT
+    assert "media_secondary" not in meta
+    assert cap["prompts"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_of_this_walks_past_a_turn_that_names_no_topic(db, monkeypatch, classifier):
+    """After "tell me about red teaming", an "ok", and "is there a pdf of this",
+    the topic is two visitor turns back."""
+    bot = _bot(db, "docs-walk-back")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    # No topical card on the answers, so only the walk back can find the file.
+    monkeypatch.setattr(rs, "_topical_media_card", lambda *_a, **_k: None)
+    _catalog(monkeypatch, CATALOG)
+
+    await _drive_stream(bot, "tell me about red teaming", "docs-walk-back")
+    await _drive_stream(bot, "ok", "docs-walk-back")
+    assert all(m.media_card is None for m in _messages(db, "docs-walk-back", role="bot")), "precondition"
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, PDF_OF_THIS, "docs-walk-back")
+
+    assert _final_meta(frames)["media_card"]["url"] == RED, _answer_text(frames)
+    assert _answer_text(frames).endswith("Here you go: **Red Teaming** is ready to download below.")
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_names_no_topic_takes_the_topic_from_the_search_rewrite(db, monkeypatch, classifier):
+    bot = _bot(db, "docs-rewrite-topic")
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme does red teaming."),), support=True)
+    rewritten = "Acme red teaming datasheet"
+
+    async def rewrite(*_a, **_k):
+        return rewritten, None
+
+    monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", rewrite)
+    _catalog(
+        monkeypatch,
+        [
+            {
+                "files": [
+                    {"url": SOC, "name": "SOC-as-a-Service-Datasheet.pdf"},
+                    {"url": RED_DATASHEET, "name": "Red-Teaming-Datasheet.pdf"},
+                ]
+            }
+        ],
+    )
+    classifier.answer = "send"
+
+    frames = await _drive_stream(bot, "send me the datasheet", "docs-rewrite-topic")
+
+    meta = _final_meta(frames)
+    assert meta["media_card"]["url"] == RED_DATASHEET, _answer_text(frames)
+    assert "media_secondary" not in meta
