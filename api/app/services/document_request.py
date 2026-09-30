@@ -731,6 +731,14 @@ _PROFILE_RE = re.compile(r"brochure|company[-_ ]?profile|overview|capabilit|corp
 #: datasheets got "I don't have a downloadable document". A case study, a
 #: report or a whitepaper is plainly something else and is never offered for it.
 _OVERVIEW_KINDS = frozenset({"datasheet", "spec sheet", "one-pager"})
+#: The one kind word that is also a topic word ("report" in ``Annual-Report.pdf``
+#: is part of what the file is about). It counts toward a match beside a shared
+#: topic word and never on its own, and a report is never offered for its kind
+#: alone: a catalog's reports are often third-party. Review 2026-09-30: "can u
+#: share your SOC 2 type 2 report" shared only "report" with IBM's
+#: ``cost-of-a-data-breach-2025-full-report.pdf``, which was offered for it.
+_KIND_TOPIC_WORDS = frozenset({"report", "reports"})
+_TOPIC_ONLY_KINDS = frozenset({"report"})
 #: Words that say how a document is asked for, never which one. Includes
 #: greetings, politeness and filler that name no document either: "thanks!
 #: could you email me the brochure" and "hey guys send me your brochure" must
@@ -1256,7 +1264,9 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
     equally good files, one of the kind asked for comes first. When no file shares
     a word, or the question names only a kind ("any case studies?"), the files of
     that kind are offered, exact only when there was no topic to miss (see
-    ``_no_topic_to_miss``). A request for a brochure or a
+    ``_no_topic_to_miss``). A report is the exception: it is offered only when it
+    shares a topic word besides "report" itself, never for its kind alone (see
+    ``_KIND_TOPIC_WORDS``). A request for a brochure or a
     company profile, or one naming neither a kind nor a topic, falls back to
     profile-like files, marked inexact. Anything else gets no files: never an
     unrelated one, like a third-party report the knowledge base happens to link.
@@ -1289,7 +1299,7 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
     if asked_about.words:
         shared_by_file = [(_shared_words(asked_about, f), f) for f in files]
         scored = sorted(
-            ((shared, f) for shared, f in shared_by_file if shared),
+            ((shared, f) for shared, f in shared_by_file if shared - _KIND_TOPIC_WORDS),
             key=lambda sf: (
                 _identifier_rank(asked_about, sf[1]),
                 -len(sf[0] & asked_about.clause_words),
@@ -1322,7 +1332,7 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
             ]
             return _offer(best, others, exact=exact, limit=limit)
 
-    of_kind = sorted((f for f in files if asked & f.kinds), key=rank)
+    of_kind = sorted((f for f in files if (asked - _TOPIC_ONLY_KINDS) & f.kinds), key=rank)
     if of_kind:
         first = of_kind[0]
         exact = _no_topic_to_miss(asked_about, first)
@@ -1349,12 +1359,12 @@ def names_a_topic(question: object, company_name: str | None) -> bool:
     "is there a pdf of this" and "send me the datasheet" name none: their topic
     is in the conversation, so the route reads the search rewrite and the
     earlier visitor turns for it. Contact details, a self-introduction, the
-    channel, the company's own words and the document words themselves do not
-    count. Pure and linear.
+    channel, the company's own words and the document words themselves
+    ("report" among them) do not count. Pure and linear.
     """
     text = _without_contacts(question if isinstance(question, str) else "")
     company = _terms(company_name)
-    return bool(_question(text, company, []).words)
+    return bool(_question(text, company, []).words - _KIND_TOPIC_WORDS)
 
 
 #: A hash or id in a file name, "68d65d47051e1b0ca7a66228" or "29330f6b": noise to a reader.

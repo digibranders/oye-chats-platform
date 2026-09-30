@@ -10906,11 +10906,34 @@ async def rag_pipeline_stream(
             # Which file to offer is still decided by ``pick_documents``, never by
             # the model.
             #
+            # A question about the company's own credentials is not a file
+            # request, whatever the classifier hears in "share your SOC 2 type 2
+            # report": like a pricing question it falls through, to the model
+            # and its CREDENTIAL FACTS block, unless the catalog holds the exact
+            # file. Review 2026-09-30: with "report" a document noun, CleanStart
+            # answered that question "I don't have a downloadable document for
+            # that here" and Eventus offered IBM's breach report as its own.
+            #
             # The catalog fetched here is reused by the media catalog and the card
             # checks further down, so a turn reads it from the database once.
             _bot_catalog: list[dict] | None = None
             _pick = None
             _doc_intent_tags: dict[str, str] = {}
+            # The text the credential check reads, decided once for the document
+            # route here and the check itself below ("Credential facts, alongside
+            # the relevance gate"): the visitor's words, or for a follow-up its
+            # rewrite, as the pricing gate reads it. None when the turn asks
+            # about no credential. A non-English turn is left to the knowledge
+            # base like the other English-tuned judges.
+            _credential_question_text: str | None = None
+            if _credential_question:
+                _credential_question_text = question
+            elif (
+                not _judges_bypassed
+                and _gate_search_query != question
+                and _credential_facts.asks_about_credentials(_gate_search_query, _company_name)
+            ):
+                _credential_question_text = _gate_search_query
             if _doc_intent_task is not None:
                 if bid is not None:
                     _bot_catalog = _owned_bot_catalog(session, bid, _owned_media)
@@ -10948,6 +10971,18 @@ async def rag_pipeline_stream(
                         bot_id=bid,
                     )
                     # The classifier's answer is not needed: stop waiting on it.
+                    _doc_intent_task.cancel()
+                    _pick = None
+                elif _credential_question_text is not None and not (_pick.docs and _pick.exact):
+                    _safety_net_metric(
+                        "document_request_fell_through",
+                        path="stream",
+                        reason="credentials",
+                        found=str(len(_pick.docs)),
+                        exact=str(_pick.exact),
+                        session=session_id,
+                        bot_id=bid,
+                    )
                     _doc_intent_task.cancel()
                     _pick = None
                 else:
@@ -11225,18 +11260,8 @@ async def rag_pipeline_stream(
             # written from, so the model is told which credentials the company
             # holds and which it only offers (``credential_facts``). The check
             # starts here, once the chunks are final, and runs while the relevance
-            # gate judges them; generation awaits it. A follow-up is read on its
-            # rewrite, as the pricing gate reads it. A non-English turn is left to
-            # the knowledge base like the other English-tuned judges.
-            _credential_question_text: str | None = None
-            if _credential_question:
-                _credential_question_text = question
-            elif (
-                not _judges_bypassed
-                and _gate_search_query != question
-                and _credential_facts.asks_about_credentials(_gate_search_query, _company_name)
-            ):
-                _credential_question_text = _gate_search_query
+            # gate judges them; generation awaits it. Which text it reads was
+            # decided above the document route (``_credential_question_text``).
             if _credential_question_text is not None and final_results:
                 _credential_task = asyncio.create_task(
                     _credential_facts.check_credentials_bounded(

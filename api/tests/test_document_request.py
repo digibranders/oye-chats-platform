@@ -921,6 +921,33 @@ def test_a_report_request_is_not_answered_with_a_datasheet():
     assert pick.docs == []
 
 
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # Review 2026-09-30: both are credential questions that production
+        # answers from the knowledge base. The kind word alone matched IBM's
+        # breach report, which Eventus then offered as its SOC 2 report.
+        "can u share your SOC 2 type 2 report",
+        "our vendor risk team is asking for ur soc 2 type ii report",
+        "send me the annual report",
+        "send me your security report",
+        "any reports i can download?",
+        "send me your report",
+    ],
+)
+def test_a_report_sharing_only_the_word_report_is_never_offered(msg):
+    pick = pick_documents(msg, "Eventus Security", _catalog(BREACH_REPORT, SOC))
+    assert pick.docs == []
+    assert pick.exact is False
+
+
+def test_a_report_named_by_its_topic_is_still_exact():
+    url = "https://acme.com/files/SOC-2-Type-2-Report.pdf"
+    pick = pick_documents("can u share your SOC 2 type 2 report", "Acme", _catalog(url, BREACH_REPORT))
+    assert [d["url"] for d in pick.docs] == [url]
+    assert pick.exact is True
+
+
 def test_a_generic_brochure_request_falls_back_to_a_datasheet():
     pick = pick_documents(BROCHURE_AND_CALL, "Acme", _catalog(SOC))
     assert [d["url"] for d in pick.docs] == [SOC]
@@ -973,6 +1000,7 @@ def test_an_exact_datasheet_request_is_still_exact():
     [
         ("is there a pdf of this", False),
         ("send me the datasheet", False),
+        ("can u share the report pls", False),
         ("ok", False),
         ("thanks, send me your brochure please", False),
         ("", False),
