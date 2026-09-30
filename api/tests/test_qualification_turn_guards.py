@@ -15,6 +15,7 @@ Production, 2026-09-28:
   question. An incident or a recap is not a sales moment.
 """
 
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -202,6 +203,63 @@ class TestStatedDimensionDetection:
         assert rs._current_turn_states_dimension("by March", "timing")
         assert rs._current_turn_states_dimension("I'm the CFO", "economic_buyer")
         assert rs._current_turn_states_dimension("around $5,000 per month", "money")
+
+
+class TestTheDetectorsAreLinear:
+    """The detectors run on the event loop on every qualifying turn. Review
+    2026-09-30: 5,000 digits (the longest message the API accepts) held the
+    timeline pattern for 0.30 s, a digit and a run of spaces for longer, and
+    "i am looking" repeated held the authority pattern for a second."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("9" * 5000, id="digits"),
+            pytest.param("1 " * 2500, id="spaced-digits"),
+            pytest.param("3" + " " * 4998 + "x", id="digit-then-spaces"),
+            pytest.param("3 to " * 1000, id="ranges"),
+            pytest.param("a few " * 800, id="a-few"),
+            pytest.param("by early " * 550, id="by-early"),
+            pytest.param("no fixed " * 550, id="no-fixed"),
+            pytest.param("i am looking " * 380, id="i-am-looking"),
+            pytest.param("i'm researching for " * 250, id="researching-for"),
+            pytest.param("my boss " * 600, id="my-boss"),
+            pytest.param("the board makes the " * 250, id="the-board"),
+            pytest.param("i'm the " * 600, id="im-the"),
+            pytest.param("no budget is " * 380, id="no-budget"),
+            pytest.param("budget " * 700, id="budget"),
+            pytest.param("summarise " * 500, id="summarise"),
+            pytest.param("sum it " * 700, id="sum-it"),
+            pytest.param("everything we have " * 260, id="everything-we-have"),
+        ],
+    )
+    @pytest.mark.parametrize("dimension", ["timeline", "authority", "budget"])
+    def test_a_long_message_is_read_in_linear_time(self, text, dimension):
+        started = time.perf_counter()
+        rs._current_turn_states_dimension(text, dimension)
+        rs._is_recap_turn(text)
+        assert time.perf_counter() - started < 0.1
+
+    def test_a_statement_at_the_start_of_a_long_message_is_still_read(self):
+        assert rs._current_turn_states_dimension("about 3 months. " + "We run a fintech. " * 200, "timeline")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "within 18 months",
+            "in 2 - 3 weeks",
+            "6 to 12 months",
+            "90 days",
+            "3+ months",
+            "two or three weeks",
+            "a couple of months",
+        ],
+    )
+    def test_bounded_numbers_still_read_as_a_timeline(self, text):
+        assert rs._current_turn_states_dimension(text, "timeline")
+
+    def test_a_long_number_is_not_a_timeline(self):
+        assert rs._current_turn_states_dimension("order 20260930 days", "timeline") is None
 
 
 class TestPipelinePassesTheSessionFlags:

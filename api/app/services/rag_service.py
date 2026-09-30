@@ -6692,14 +6692,21 @@ _MONTH_NAMES = (
 )
 _SMALL_NUMBER_WORDS = r"a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple of|few|several"
 
+# Every repeat below is bounded, so the patterns read a message in linear time:
+# they run on the event loop. A number is at most four digits ("18 months",
+# never an order number), a second one only follows "-", "to" or "or", and a gap
+# is at most three spaces; an unbounded ``\d+`` twice in a row took 0.30 s on
+# 5,000 digits (review, 2026-09-30).
 _TIMELINE_STATED_RE = re.compile(
     r"(?i)(?:"
-    rf"\b(?:\d+|{_SMALL_NUMBER_WORDS})\s*(?:\+|-|to|or)?\s*(?:\d+\s*)?(?:days?|weeks?|months?|quarters?|years?)\b"
-    r"|\b(?:this|next|coming|end of (?:this|the|next)|by the end of (?:this|the|next))\s+(?:week|month|quarter|year)\b"
-    rf"|\bby\s+(?:early|mid|late|end of)?\s*(?:{_MONTH_NAMES})\b"
+    rf"(?<![\w.,])(?:\d{{1,4}}|{_SMALL_NUMBER_WORDS})"
+    rf"(?:\s{{0,3}}(?:-|to|or)\s{{0,3}}(?:\d{{1,4}}|{_SMALL_NUMBER_WORDS}))?\+?\s{{0,3}}"
+    r"(?:days?|weeks?|months?|quarters?|years?)\b"
+    r"|\b(?:this|next|coming|end of (?:this|the|next)|by the end of (?:this|the|next))\s{1,3}(?:week|month|quarter|year)\b"
+    rf"|\bby\s{{1,3}}(?:(?:early|mid|late|end of)\s{{1,3}})?(?:{_MONTH_NAMES})\b"
     r"|\bq[1-4]\b"
     r"|\b(?:asap|as soon as possible|immediately|right away|straight away|urgently)\b"
-    r"|\bno\s+(?:fixed|specific|particular|firm|set)?\s*(?:timeline|timeframe|time frame|deadline|rush)\b"
+    r"|\bno\s{1,3}(?:(?:fixed|specific|particular|firm|set)\s{1,3})?(?:timeline|timeframe|time frame|deadline|rush)\b"
     r")"
 )
 
@@ -6707,23 +6714,28 @@ _ROLE_WORDS = (
     r"(?:ceo|cto|cfo|coo|cio|ciso|cmo|founder|co-?founder|owner|director|head|vp|vice president|manager|"
     r"lead|partner|president|principal|proprietor|decision[- ]maker|budget owner)"
 )
+# The words between "I'm researching" and "for my manager", or between "my
+# boss" and "decides": one sentence's worth, never the rest of the message.
+_AUTHORITY_GAP = r"[^.?!\n]{0,80}"
 _AUTHORITY_STATED_RE = re.compile(
     r"(?i)(?:"
-    rf"\bi(?:'m| am)\s+(?:the|a|an|our|its|their)?\s*(?:[\w-]+\s+)?{_ROLE_WORDS}\b"
-    r"|\bi\s+(?:make|take|own|have)\s+the\s+(?:final\s+|buying\s+|purchasing\s+)?(?:decision|call|say)\b"
-    r"|\bi\s+(?:decide|sign off|approve)\b"
-    r"|\b(?:it'?s|that'?s)\s+my\s+(?:decision|call)\b"
-    r"|\bi(?:'m| am)\s+(?:just\s+)?(?:researching|looking|asking|checking|gathering|scoping)\b.*"
-    r"\b(?:for|on behalf of)\s+(?:my|our|the|a|someone)\b"
-    r"|\b(?:my|our|the)\s+(?:boss|manager|ceo|cto|cfo|director|team|board|founder|owner|partners?|committee)\b.*"
-    r"\b(?:decides?|will decide|makes? the (?:final\s+)?(?:decision|call)|has to (?:approve|sign off)|signs? off|approves?)\b"
+    rf"\bi(?:'m| am)\s{{1,3}}(?:(?:the|a|an|our|its|their)\s{{1,3}})?(?:[\w-]{{1,30}}\s{{1,3}})?{_ROLE_WORDS}\b"
+    r"|\bi\s{1,3}(?:make|take|own|have)\s{1,3}the\s{1,3}(?:final\s{1,3}|buying\s{1,3}|purchasing\s{1,3})?"
+    r"(?:decision|call|say)\b"
+    r"|\bi\s{1,3}(?:decide|sign off|approve)\b"
+    r"|\b(?:it'?s|that'?s)\s{1,3}my\s{1,3}(?:decision|call)\b"
+    r"|\bi(?:'m| am)\s{1,3}(?:just\s{1,3})?(?:researching|looking|asking|checking|gathering|scoping)\b"
+    rf"{_AUTHORITY_GAP}\b(?:for|on behalf of)\s{{1,3}}(?:my|our|the|a|someone)\b"
+    r"|\b(?:my|our|the)\s{1,3}(?:boss|manager|ceo|cto|cfo|director|team|board|founder|owner|partners?|committee)\b"
+    rf"{_AUTHORITY_GAP}"
+    r"\b(?:decides?|will decide|makes? the (?:final\s{1,3})?(?:decision|call)|has to (?:approve|sign off)|signs? off|approves?)\b"
     r")"
 )
 
 _BUDGET_STATED_RE = re.compile(
     r"(?i)(?:"
-    r"\bno\s+(?:fixed|set|specific|particular|firm|real)?\s*budget\b"
-    r"|\bbudget\s+(?:is|of|around|about|would be|is around|is about|sits at)\b"
+    r"\bno\s{1,3}(?:(?:fixed|set|specific|particular|firm|real)\s{1,3})?budget\b"
+    r"|\bbudget\s{1,3}(?:is|of|around|about|would be|is around|is about|sits at)\b"
     r")"
 )
 
@@ -6741,6 +6753,10 @@ _DIMENSION_KIND_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 # "3 months"); a long one is recorded by the span that stated the dimension.
 _STATED_VALUE_WHOLE_MESSAGE_WORDS = 15
 _STATED_VALUE_MAX_CHARS = 160
+# A qualification answer is a line, not a paste: only the opening of a long
+# message is read. This also bounds ``_states_budget_amount``, whose money
+# detector is not linear in a run of digits or spaces.
+_STATED_SCAN_CHARS = 300
 
 
 def _dimension_kind(dimension: str) -> str | None:
@@ -6765,7 +6781,7 @@ def _current_turn_states_dimension(question: str, dimension: str) -> str | None:
     for budget, plus phrase patterns for timeline, authority and a budget stated
     without an amount. Returns the text to show in the qualification state.
     """
-    q = (question or "").strip()
+    q = (question or "").strip()[:_STATED_SCAN_CHARS]
     if not q or _QUESTION_LEAD_RE.match(q):
         return None
     kind = _dimension_kind(dimension)
