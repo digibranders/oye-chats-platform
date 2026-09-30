@@ -1160,6 +1160,20 @@ class TestTheFirstLineFitsTheMessage:
         assert "AKIA" not in r.text
         assert r.suggest_handoff is True and r.needs_message_card is False
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "our admin password: changed by attacker",
+            "question about tokens: pricing per 1000 tokens?",
+            "forgot my password: cannot login",
+        ],
+    )
+    def test_a_message_that_only_talks_about_a_password_gets_no_rotate_line(self, message):
+        """Review 2026-09-30: no secret was pasted, so there is nothing to revoke."""
+        r = _reply(team_available=False, message=message)
+        assert CREDENTIAL_LINE not in r.text
+        assert r.text.startswith("This sounds urgent")
+
     def test_distress_gets_one_empathy_clause_first(self):
         r = _reply(team_available=False, message=DISTRESS_INCIDENT)
         assert r.text == (

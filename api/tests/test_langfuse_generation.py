@@ -141,6 +141,11 @@ class TestRedactSecrets:
             ("the key is AKIAIOSFODNN7EXAMPLE ok", "the key is [REDACTED_SECRET] ok"),
             ("temp creds ASIAIOSFODNN7EXAMPLE expired", "temp creds [REDACTED_SECRET] expired"),
             ("password: hunter2hunter2", "password: [REDACTED_SECRET]"),
+            ("our admin password: Tr0ub4dor&3 was leaked", "our admin password: [REDACTED_SECRET] was leaked"),
+            ("DB_PASSWORD=correctHorseBattery", "DB_PASSWORD=[REDACTED_SECRET]"),
+            ("client_secret: 9f8e7d6c5b4a", "client_secret: [REDACTED_SECRET]"),
+            ("api-key-2=abcd1234efgh", "api-key-2=[REDACTED_SECRET]"),
+            ("pwd=S3cr3t!pass", "pwd=[REDACTED_SECRET]"),
             ('api_key = "sk_' + 'live_4eC39HqLyjWDarjtT1zdp7dc"', 'api_key = "[REDACTED_SECRET]"'),
             ("token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij12", "token=[REDACTED_SECRET]"),
             ("slack xoxb-123456789012-abcdefghij", "slack [REDACTED_SECRET]"),
@@ -170,6 +175,18 @@ class TestRedactSecrets:
             "meet at 2026-07-08, token: yes",
             "AKIA is the prefix aws uses",
             "",
+            # Review 2026-09-30: a word that only starts with the keyword is not
+            # a name, and a plain word after the colon is not a secret.
+            "question about tokens: pricing per 1000 tokens?",
+            "passwordless: supported?",
+            "forgot my password: cannot login",
+            "our admin password: changed by attacker",
+            "passwords: rotated yesterday",
+            "secrets: handled by vault",
+            "is the api key: required for webhooks",
+            "password: Required",
+            "secretary=margaret-jones",
+            "password: ********",
         ],
     )
     def test_ordinary_text_is_left_alone(self, text):
@@ -194,11 +211,15 @@ class TestRedactSecrets:
             "AKIA" + "A" * 50000,
             "secret " * 10000 + "= " + "x" * 10000,
             "a" * 30000 + "=" + "b" * 30000,
+            "password: " + "b" * 50000,
+            "tokens: " * 6000,
+            "secret.secret-" * 4000,
         ],
     )
     def test_redaction_is_linear_on_long_input(self, text):
         started = time.perf_counter()
         lc.redact_secrets(text)
+        lc.contains_secret(text)
         assert time.perf_counter() - started < 0.5
 
 
