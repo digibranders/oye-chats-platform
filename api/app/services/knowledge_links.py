@@ -189,11 +189,14 @@ def company_fact_page_kind(url: object) -> str | None:
 
 
 #: Which pages answer which question, best first. An about page is the fallback
-#: for all three: it is where a small site puts its address and its founders.
+#: for the first three: it is where a small site puts its address and its
+#: founders. It is the only answer to "who are you guys" (``about``): a contact
+#: or team page does not say what the company is.
 _PAGE_KINDS_FOR_QUESTION: dict[str, tuple[str, ...]] = {
     "locations": ("contact", "locations", "about"),
     "contact": ("contact", "about"),
     "team": ("team", "about"),
+    "about": ("about",),
 }
 
 

@@ -2341,6 +2341,64 @@ _FACT_GEOGRAPHY = (
 _FACT_THE_COMPANY = r"(?:you|u|y'?all|(?:your|ur)\s+\w+|the\s+(?:company|firm|organi[sz]ation|business|agency))"
 _OWNED_BY_US = r"(?:your|ur|yr|the\s+company'?s?|company'?s)"
 
+# Who or what the company is. Reported from production on 2026-09-30, the day the
+# plural "who are you guys" stopped getting the bot-name line: on a hardened
+# container images company's bot "who are you guys exactly" was refused as
+# off-topic three times out of three, and on a managed SOC's bot retrieval
+# returned blog posts, so the reply described the company's blog. Both sites have
+# an about page. A question matched here (kind ``about``) is on scope and pins it.
+#
+# Whole messages only: "what do you do for ransomware" asks about a service and
+# "who are you guys partnering with" about partners. The singular "who are you"
+# and "what's your name" ask for the bot's name, which the intent router answers.
+_IDENTITY_LEAD_IN = r"^\s*(?:(?:so|and|but|ok|okay|wait|well|hey|hi|hello|sorry|btw)\s*,?\s+){0,2}"
+# Words that close such a question without changing it.
+_IDENTITY_CLOSERS = r"(?:\s+(?:exactly|again|really|actually|anyway|though|then|here|please|pls)){0,2}"
+_IDENTITY_TAIL = rf"{_IDENTITY_CLOSERS}\s*[?.!]*\s*$"
+_PLURAL_YOU_WORDS = r"(?:guys|people|all|lot|folks)"
+# The business addressed as a group, and "as a company" after either form.
+_US_AS_A_GROUP = rf"(?:(?:you|u),?\s+{_PLURAL_YOU_WORDS}|y['’]?all)"
+_YOU_OR_US = rf"(?:(?:you|u)(?:,?\s+{_PLURAL_YOU_WORDS})?|y['’]?all)"
+_AS_A_COMPANY = r"\s+as\s+an?\s+(?:company|firm|business|organi[sz]ation|agency|team)"
+_COMPANY_NOUN = r"(?:company|firm|business|organi[sz]ation|agency)"
+_THIS_COMPANY = rf"(?:your|ur|this|the)\s+{_COMPANY_NOUN}"
+_WHAT_OR_WHO_IS = r"(?:what|who)(?:\s+(?:is|are)|\s*['’]?s)"
+_DOES_WHAT = r"\s+(?:(?:actually|really|even)\s+)?do"
+_TELL_ME_ABOUT = (
+    r"(?:(?:can|could)\s+(?:you|u)\s+)?(?:please\s+)?tell\s+me\s+(?:(?:a\s+(?:bit|little)\s+)?more\s+)?about"
+)
+_ABOUT_US_CLAUSE = (
+    r"(?:"
+    rf"who\s+(?:are|r)\s+(?:{_US_AS_A_GROUP}(?:{_AS_A_COMPANY})?|(?:you|u){_AS_A_COMPANY})"
+    rf"|what\s+(?:exactly\s+)?(?:do|does)\s+(?:{_YOU_OR_US}|{_THIS_COMPANY}){_DOES_WHAT}"
+    rf"|what\s+is\s+it\s+(?:that\s+)?{_YOU_OR_US}{_DOES_WHAT}"
+    rf"|{_TELL_ME_ABOUT}\s+(?:{_THIS_COMPANY}|{_US_AS_A_GROUP}|yourselves)"
+    rf"|what\s+(?:kind|sort|type)\s+of\s+{_COMPANY_NOUN}\s+(?:(?:are|r)\s+{_YOU_OR_US}|is\s+(?:this|it))"
+    rf"|{_WHAT_OR_WHO_IS}\s+{_THIS_COMPANY}(?:\s+(?:all\s+)?about)?"
+    rf"){_IDENTITY_CLOSERS}"
+)
+# One such question, or two in a row ("who are you guys and what do you do"). The
+# first may be the singular "who are you": the intent router hands that message
+# over when it also asks about the business.
+_NEXT_CLAUSE = r"\s*[?,.]?\s+(?:and\s+)?"
+_ASKS_ABOUT_US_RE = re.compile(
+    rf"(?i){_IDENTITY_LEAD_IN}(?:who\s+(?:are|r)\s+(?:you|u){_IDENTITY_CLOSERS}{_NEXT_CLAUSE})?"
+    rf"{_ABOUT_US_CLAUSE}(?:{_NEXT_CLAUSE}{_ABOUT_US_CLAUSE})?\s*[?.!]*\s*$"
+)
+# The same shapes about a subject the visitor names, which counts only when it
+# is this company's name (``_is_the_company_name``): "what is SOC 2" asks about a
+# concept and "what is Eventus Security's pricing" about a price. The subject is
+# lazy and bounded, so the match stays linear.
+_NAMED_SUBJECT = r"(\S.{0,59}?)"
+_ASKS_ABOUT_A_NAME_RE = re.compile(
+    rf"(?i){_IDENTITY_LEAD_IN}(?:"
+    rf"{_WHAT_OR_WHO_IS}\s+{_NAMED_SUBJECT}(?:\s+(?:all\s+)?about)?"
+    rf"|what\s+(?:exactly\s+)?(?:do|does)\s+{_NAMED_SUBJECT}{_DOES_WHAT}"
+    rf"|{_TELL_ME_ABOUT}\s+{_NAMED_SUBJECT}"
+    rf"|what\s+(?:kind|sort|type)\s+of\s+{_COMPANY_NOUN}\s+is\s+{_NAMED_SUBJECT}"
+    rf"){_IDENTITY_TAIL}"
+)
+
 _COMPANY_FACT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "locations",
@@ -2431,9 +2489,46 @@ _FACT_NOUN_BY_KIND: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+#: A whole-message identity question is short. The two patterns above are
+#: anchored at both ends with optional parts between, which backtracks over a long
+#: run of spaces (4,000 of them cost 1.9 s), so they read a message with its
+#: whitespace collapsed and only one up to this length.
+_IDENTITY_QUESTION_MAX_CHARS = 200
+
+
+def _identity_question_text(question: str) -> str | None:
+    """``question`` as the whole-message identity patterns read it: whitespace
+    collapsed, or ``None`` when it is too long to be such a question."""
+    collapsed = " ".join(question.split())
+    return collapsed if len(collapsed) <= _IDENTITY_QUESTION_MAX_CHARS else None
+
+
+def _is_the_company_name(subject: str, company_name: str | None) -> bool:
+    """True when ``subject`` is the company's name or its leading words, however
+    spaced: "Eventus" and "Eventus Security" for Eventus Security, "clean start"
+    for CleanStart. A later word alone ("security") is a topic, not that company.
+
+    A name that opens with a topic ("Kubernetes Consulting Group") makes "what is
+    kubernetes" read as a question about the company. The cost is the about page
+    pinned ahead of the retrieved chunks; the turn was on scope by name already.
+    """
+    signals = _company_name_signals(company_name)
+    if not signals or not company_name:
+        return False
+    tokens = re.findall(r"[^\W_]+", company_name.lower())
+    first_signal = tokens.index(signals[0])
+    spoken = "".join(re.findall(r"[^\W_]+", subject.lower()))
+    return any(
+        spoken == "".join(tokens[start:end])
+        for start in {0, first_signal}
+        for end in range(first_signal + 1, len(tokens) + 1)
+    )
+
+
 def _asks_company_facts(question: str, company_name: str | None = None) -> frozenset[str]:
     """The company facts a question asks for: a subset of ``locations``,
-    ``contact`` and ``team``, empty for any other question.
+    ``contact``, ``team`` and ``about`` (who or what the company is), empty for
+    any other question.
 
     A deterministic prefilter, English only, sized for precision: it decides
     whether retrieval spends one extra query pinning the company's own pages,
@@ -2445,6 +2540,14 @@ def _asks_company_facts(question: str, company_name: str | None = None) -> froze
     signals = _company_name_signals(company_name)
     if signals and re.search(r"\b(?:" + "|".join(map(re.escape, signals)) + r")\b", question, re.IGNORECASE):
         kinds.update(kind for kind, pattern in _FACT_NOUN_BY_KIND if pattern.search(question))
+    identity = _identity_question_text(question)
+    if identity is not None:
+        if _ASKS_ABOUT_US_RE.search(identity):
+            kinds.add("about")
+        elif signals:
+            named = _ASKS_ABOUT_A_NAME_RE.search(identity)
+            if named and any(_is_the_company_name(subject, company_name) for subject in named.groups() if subject):
+                kinds.add("about")
     return frozenset(kinds)
 
 
@@ -2500,6 +2603,11 @@ def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
         if first_word and re.search(rf"\b{re.escape(first_word)}\b", question, re.IGNORECASE):
             return True
     if _ON_SCOPE_HINTS_RE.search(question):
+        return True
+    # A question about who the company is can address it with "you" alone ("what
+    # do you guys do", "what kind of company are you"), which the hints leave out
+    # on purpose. Only that kind: "hq of google" names someone else's office.
+    if "about" in _asks_company_facts(question, company_name):
         return True
     # No Latin words at all: the regex above was never able to speak for this
     # question, so its False is "unknown", not "off-scope". Fail soft.
@@ -3571,7 +3679,31 @@ _COMPANY_FACT_CONTENT_HINTS: dict[str, re.Pattern[str]] = {
     "team": re.compile(
         r"(?i)\b(?:founders?|co-?founders?|ceo|cto|coo|cfo|ciso|directors?|chief|head\s+of|president|leadership)\b"
     ),
+    # The headings under which an about page says what the company is. "who are
+    # you guys exactly" has no keyword to rank by, and both production about
+    # pages open with four chunks of cookie notice and site menu (2026-09-30).
+    # Counted only in a chunk with a full sentence (``_has_a_full_sentence``).
+    "about": re.compile(
+        r"(?i)\b(?:who\s+we\s+are|what\s+we\s+do|why\s+choose\s+us"
+        r"|our\s+(?:story|mission|vision|journey|history|purpose|values|core\s+values)"
+        r"|founded|established|incorporated)\b"
+    ),
 }
+
+
+#: The fewest words that make a sentence worth reading as a description. "All
+#: rights reserved." and "Established 2017." are three and two.
+_FULL_SENTENCE_MIN_WORDS = 8
+_SENTENCE_BREAK_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _has_a_full_sentence(content: str) -> bool:
+    """True when ``content`` holds a sentence of running text, which a cookie
+    banner's buttons, a site menu and a footer's link list do not."""
+    return any(
+        piece.rstrip().endswith((".", "!", "?")) and len(piece.split()) >= _FULL_SENTENCE_MIN_WORDS
+        for piece in _SENTENCE_BREAK_RE.split(content)
+    )
 
 
 def _company_fact_chunks(cid: int | None, bid: int | None, query: str, kinds: frozenset[str]) -> list:
@@ -3608,12 +3740,16 @@ def _company_fact_chunks(cid: int | None, bid: int | None, query: str, kinds: fr
         logger.warning("company-facts pinning failed for bot %s", bid, exc_info=True)
         return []
     hints = [_COMPANY_FACT_CONTENT_HINTS[kind] for kind in sorted(kinds) if kind in _COMPANY_FACT_CONTENT_HINTS]
+    # An address or a phone number is a fact in any shape. What a company is takes
+    # a sentence: a menu lists "Our Story" and "What We Do" and says neither.
+    wants_prose = kinds == {"about"}
 
-    def _order(item: tuple[int, tuple]) -> tuple[int, bool, float, int]:
+    def _order(item: tuple[int, tuple]) -> tuple[int, bool, bool, float, int]:
         index, (doc, rank) = item
         content = (getattr(doc, "content", None) or "")[:_COMPANY_FACTS_HINT_CHARS]
-        states_fact = any(hint.search(content) for hint in hints)
-        return (pages.get(doc.document_name, len(pages)), not states_fact, -rank, index)
+        prose = wants_prose and _has_a_full_sentence(content)
+        states_fact = any(hint.search(content) for hint in hints) and (prose or not wants_prose)
+        return (pages.get(doc.document_name, len(pages)), not states_fact, not prose, -rank, index)
 
     ordered = sorted(enumerate(rows), key=_order)
     return [doc for _index, (doc, _rank) in ordered[:COMPANY_FACTS_PIN_LIMIT]]
@@ -8172,8 +8308,10 @@ _ASKS_WHICH_BUSINESS_RE = re.compile(
     # Whole clause only: "what company is this laptop from" asks about a product.
     r"|\b(?:which|what)\s+(?:company|business|brand|firm|website|site)\s+is\s+this"
     r"(?:\s+(?:chat|bot|assistant|website|site))?\s*[?.!]*\s*$"
-    r"|^\s*(?:(?:so|and|but|ok|okay|wait)\s*,?\s+)?who\s+(?:are|r)\s+(?:you|u)"
-    r"(?:\s+(?:guys|exactly|again))?\s*[?.!]*\s*$"
+    # Whole message only: "who are you guys partnering with" asks about partners.
+    # Any closing words: "who are you guys exactly" was refused in production
+    # (2026-09-30) while one trailing word was the limit.
+    rf"|{_IDENTITY_LEAD_IN}who\s+(?:are|r)\s+{_YOU_OR_US}(?:{_AS_A_COMPANY})?{_IDENTITY_TAIL}"
     r"|\bwho\s+do\s+(?:you|u)\s+(?:work\s+for|represent)\b"
 )
 # "is this X or Y": an identity question only when X or Y names this business,
@@ -8193,6 +8331,10 @@ def _asks_which_business_this_is(question: str, company_name: str | None) -> boo
     """
     if not question:
         return False
+    # With its whitespace collapsed: both patterns backtrack over a long run of
+    # spaces (44 s on a 5,000 character message), and a run never changes what
+    # is asked.
+    question = " ".join(question.split())
     if _ASKS_WHICH_BUSINESS_RE.search(question):
         return True
     signals = _company_name_signals(company_name)
@@ -10619,9 +10761,10 @@ async def rag_pipeline_stream(
                 # English / disabled pass None and keep the tuned default.
                 _xling_max_distance = CROSS_LINGUAL_MAX_DISTANCE if _judges_bypassed else None
                 # A question about the company's own locations, contact details or
-                # people also reads its contact, locations, about and team pages,
-                # alongside the two searches. The rewrite can carry the subject a
-                # follow-up leaves out ("so what about the locations?").
+                # people, or about who the company is, also reads its contact,
+                # locations, about and team pages, alongside the two searches. The
+                # rewrite can carry the subject a follow-up leaves out ("so what
+                # about the locations?").
                 _fact_kinds = _asks_company_facts(question, _company_name) | (
                     _asks_company_facts(search_query, _company_name) if search_query != question else frozenset()
                 )

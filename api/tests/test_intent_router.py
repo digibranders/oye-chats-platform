@@ -180,6 +180,15 @@ class TestIdentityOpenersThatCarryARealQuestion:
             "what's your name and what does the company do",
             "who made you and what is your pricing",
             "is this a bot, and how much do your plans cost",
+            # The company asked about in other words (review of 2026-09-30): each
+            # of these got the bot-name line.
+            "who are you and what does your company do",
+            "who are you? what does your company do",
+            "who are you? what kind of company are you",
+            "who are you and tell me about your company",
+            "who are you and what do you guys do",
+            "who are you, what is this company about",
+            "who are you, guys?",
         ],
     )
     def test_falls_through_to_retrieval(self, msg):
@@ -189,6 +198,7 @@ class TestIdentityOpenersThatCarryARealQuestion:
         "msg",
         [
             "who are you",
+            "who are you exactly",
             "are you a bot?",
             "what is your name",
             "who made you",

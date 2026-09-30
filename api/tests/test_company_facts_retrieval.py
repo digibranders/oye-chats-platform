@@ -13,6 +13,13 @@ chunks (mostly SOC blog posts and service pages):
 Such a question now counts as on scope, and retrieval pins up to four chunks of
 the company's contact, locations, about and team pages ahead of the retrieved
 ones, where the relevance judge reads them.
+
+Reported from production on 2026-09-30, after the plural "who are you guys"
+stopped getting the bot-name line: "who are you guys exactly" was refused as
+off-topic on a hardened container images company's bot, and on the managed SOC's
+bot retrieval returned blog posts, so the reply described the company's blog.
+Both sites have an about page. A question asking who or what the company is
+(kind ``about``) now pins that page.
 """
 
 from __future__ import annotations
@@ -45,6 +52,90 @@ _ADDRESS_CHUNK = (
     "Security Operations Center (SOC) Jeddah, KSA| Doha, QAT| Ahmedabad, IN| Mumbai, IN"
 )
 _FORM_CHUNK = "Contact us. First name. Last name. Work email. Company. Country code +33 +91. Submit."
+_ABOUT_US = f"{_SITE}/about-us/"
+_ABOUT_INTRO_CHUNK = (
+    "About Eventus Security. Eventus is a managed security services provider running 24x7 "
+    "security operations centers for enterprises across Asia and the Middle East."
+)
+_ABOUT_STORY_CHUNK = "Our story. Founded in 2017, we grew from a five-person team into a global managed SOC provider."
+
+#: Questions asking who or what the company is, on a bot whose company is
+#: "Eventus Security".
+_ABOUT_QUESTIONS = [
+    "who are you guys",
+    "who are you guys exactly",
+    "who are you people",
+    "who r u guys",
+    "who are you all exactly",
+    "so who are you guys again?",
+    "who are you as a company",
+    "what do you guys do",
+    "what does your company do",
+    "what do you do",
+    "What do you do?",
+    "so what do you do exactly?",
+    "what exactly do you guys do",
+    "what is it you do",
+    "what is Eventus Security",
+    "what is eventus?",
+    "whats eventus",
+    "what's Eventus Security all about",
+    "who is Eventus Security",
+    "who is eventus",
+    "tell me about Eventus Security",
+    "tell me more about eventus",
+    "what does eventus do",
+    "what does Eventus Security do exactly?",
+    "tell me about your company",
+    "can you tell me about your company?",
+    "tell me about you guys",
+    "what kind of company are you",
+    "what kind of company is eventus",
+    "what sort of business is this",
+    "what is this company",
+    "what is your company about",
+    "who are you guys and what do you do",
+    "who are you guys exactly? what do you do?",
+    # The intent router hands the singular over when the message also asks
+    # about the business.
+    "who are you and what do you do",
+    "who are you? what does your company do",
+]
+
+#: Near misses: the bot's own name, a service, a concept, a price, a person.
+_NOT_ABOUT_QUESTIONS = [
+    "who are you",
+    "who are you?",
+    "who r u",
+    "who are you exactly",
+    "what's your name",
+    "what is your name",
+    "what do you do for ransomware",
+    "what do you do about phishing",
+    "what do you do with my data",
+    "what do you do when an alert fires",
+    "what do you guys do for onboarding",
+    "what does your company do for ransomware",
+    "what does eventus do about insider threats",
+    "what is SOC 2",
+    "what is a security operations center",
+    "what is security",
+    "who is the attacker",
+    "what is Eventus Security's pricing",
+    "what is eventus pricing",
+    "tell me about eventus pricing",
+    "tell me about your company's certifications",
+    "tell me about ransomware",
+    "who are you guys partnering with",
+    "who are you guys and what do you charge",
+    "who are you and what is your name",
+    "who are you and who are you",
+    "what do you do and how much does it cost",
+    "what kind of company should use a soc",
+    "what is this company policy on refunds",
+    "what do i do",
+    "what should you do",
+]
 
 _ids = itertools.count(50_000_000)
 
@@ -92,10 +183,26 @@ class TestTheQuestionIsRecognised:
             ("how many employees are there in your company", "team"),
             ("how many people work at the company", "team"),
             ("do you work in the UK", "locations"),
+            *((question, "about") for question in _ABOUT_QUESTIONS),
         ],
     )
     def test_a_facts_question(self, question, kind):
         assert kind in rs._asks_company_facts(question, "Eventus Security")
+
+    @pytest.mark.parametrize("question", _NOT_ABOUT_QUESTIONS)
+    def test_not_a_question_about_who_the_company_is(self, question):
+        assert "about" not in rs._asks_company_facts(question, "Eventus Security")
+
+    def test_who_is_your_ceo_asks_for_the_team_only(self):
+        assert rs._asks_company_facts("who is your CEO", "Eventus Security") == {"team"}
+
+    def test_a_named_question_needs_the_bots_own_company(self):
+        assert rs._asks_company_facts("what is cleanstart", "CleanStart") == {"about"}
+        assert rs._asks_company_facts("what is clean start?", "CleanStart") == {"about"}
+        assert rs._asks_company_facts("tell me about the coding school", "The Coding School") == {"about"}
+        assert rs._asks_company_facts("what is the", "The Coding School") == frozenset()
+        assert rs._asks_company_facts("what is cleanstart", "Eventus Security") == frozenset()
+        assert rs._asks_company_facts("what is eventus", None) == frozenset()
 
     @pytest.mark.parametrize(
         "question",
@@ -120,6 +227,13 @@ class TestTheQuestionIsRecognised:
             "where can I find your owners manual",
             "how many people work at the hall",
             "do you work in statesville",
+            # The bot's own name stays with the intent router; a service, a
+            # concept and a price are for retrieval.
+            "who are you",
+            "what's your name",
+            "what do you do for ransomware",
+            "what is SOC 2",
+            "what is Eventus Security's pricing",
             "",
         ],
     )
@@ -129,7 +243,8 @@ class TestTheQuestionIsRecognised:
     def test_naming_the_company_with_a_facts_noun_counts(self):
         assert rs._asks_company_facts("where is eventus located", "Eventus Security") == {"locations"}
         assert rs._asks_company_facts("eventus founders", "Eventus Security") == {"team"}
-        assert rs._asks_company_facts("what does eventus do", "Eventus Security") == frozenset()
+        assert rs._asks_company_facts("what does eventus do", "Eventus Security") == {"about"}
+        assert rs._asks_company_facts("what does eventus charge", "Eventus Security") == frozenset()
 
     @pytest.mark.parametrize(
         "question",
@@ -141,14 +256,34 @@ class TestTheQuestionIsRecognised:
             "where are your branches",
             "list your locations",
             "which countries are you in",
+            "who are you guys exactly",
+            "what do you guys do",
+            "what kind of company are you",
+            "what is this company",
         ],
     )
     def test_a_facts_question_is_clearly_on_scope(self, question):
         assert rs._question_is_clearly_on_scope(question, "Eventus Security") is True
 
-    @pytest.mark.parametrize("question", ["where is my order", "where do I find the settings"])
+    @pytest.mark.parametrize(
+        "question",
+        ["where is my order", "where do I find the settings", "who are you", "what do you do for fun", "what is SOC 2"],
+    )
     def test_the_negatives_stay_unknown_on_scope(self, question):
         assert rs._question_is_clearly_on_scope(question, "Eventus Security") is False
+
+    @pytest.mark.parametrize(
+        "question", ["what do you guys do", "what kind of company are you", "what is this company"]
+    )
+    def test_a_question_about_who_the_company_is_looks_on_scope(self, question):
+        """With nothing retrieved, the generous predicate picks the reply: the
+        honest gap line for a question about the business, the scope line for
+        anything else."""
+        assert rs._question_looks_on_scope(question, "Eventus Security") is True
+
+    @pytest.mark.parametrize("question", ["what do you do for fun", "what is the capital of france"])
+    def test_the_negatives_do_not_look_on_scope(self, question):
+        assert rs._question_looks_on_scope(question, "Eventus Security") is False
 
     @pytest.mark.parametrize(
         "text",
@@ -162,6 +297,18 @@ class TestTheQuestionIsRecognised:
             "are you available in " * 2000,
             "your phone " * 3000,
             "your owners " * 3000,
+            "who are you guys " * 1200,
+            "who are you guys and " * 1000,
+            "who are you and " * 1200,
+            "what do you guys do " * 1000,
+            "tell me about " * 1500,
+            "what is " + "eventus " * 3000,
+            "what kind of company " * 1000,
+            "so " * 5000 + "who are you guys",
+            # A run of spaces inside a message as long as the API accepts.
+            "who are you guys" + " " * 4980 + "x",
+            "what is" + " " * 4980 + "eventus",
+            "tell me about" + " " * 4980,
             "a" * 20_000,
         ],
     )
@@ -170,6 +317,45 @@ class TestTheQuestionIsRecognised:
         rs._asks_company_facts(text, "Eventus Security")
         rs._question_is_clearly_on_scope(text, "Eventus Security")
         assert time.perf_counter() - started < 0.5
+
+
+class TestOnlyAnIdentityQuestionWidensTheScope:
+    """``_question_looks_on_scope`` picks the gap line over the off-topic line.
+    A question about who the company is addresses it with "you" alone, so it
+    counts; a locations or team question about someone else does not start to."""
+
+    @pytest.mark.parametrize("question", ["what kind of company are you", "what do you guys do", "who are you guys"])
+    def test_an_identity_question_is_on_scope(self, question):
+        assert rs._question_looks_on_scope(question, "Eventus Security") is True
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "hq of google",
+            "board of directors of tesla",
+            "leadership team of microsoft",
+            "whats nvidia's global presence",
+        ],
+    )
+    def test_another_companys_facts_are_not(self, question):
+        assert rs._question_looks_on_scope(question, "Eventus Security") is False
+
+
+class TestAnIdentityQuestionIsShort:
+    """The whole-message identity patterns read a message with its whitespace
+    collapsed, and only one short enough to be such a question."""
+
+    @pytest.mark.parametrize(
+        "question",
+        ["who  are   you guys\texactly", "  what   does\nyour company do ?", "what is   eventus   security"],
+    )
+    def test_extra_whitespace_changes_nothing(self, question):
+        assert "about" in rs._asks_company_facts(question, "Eventus Security")
+
+    def test_a_long_message_is_not_an_identity_question(self):
+        padded = "who are you guys exactly " + "really " * 40
+        assert len(padded) > rs._IDENTITY_QUESTION_MAX_CHARS
+        assert "about" not in rs._asks_company_facts(padded, "Eventus Security")
 
 
 class TestThePagesAreRecognised:
@@ -211,6 +397,8 @@ class TestThePagesAreRecognised:
         urls = [_CONTACT_US, f"{_SITE}/about-us/", f"{_SITE}/leadership/", f"{_SITE}/blog/x"]
         assert company_fact_pages(urls, {"locations"}) == {_CONTACT_US: 0, f"{_SITE}/about-us/": 2}
         assert company_fact_pages(urls, {"team"}) == {f"{_SITE}/leadership/": 0, f"{_SITE}/about-us/": 1}
+        assert company_fact_pages(urls, {"about"}) == {f"{_SITE}/about-us/": 0}
+        assert company_fact_pages(urls, {"about", "locations"}) == {_CONTACT_US: 0, f"{_SITE}/about-us/": 0}
         assert company_fact_pages(urls, set()) == {}
 
 
@@ -249,6 +437,11 @@ def _eventus_shaped_kb(db, bot, articles=40):
     form = _document(db, bot, _CONTACT_US, _FORM_CHUNK)
     address = _document(db, bot, _CONTACT_US, _ADDRESS_CHUNK)
     return form, address
+
+
+def _about_page(db, bot):
+    """The about page's two chunks, in page order."""
+    return _document(db, bot, _ABOUT_US, _ABOUT_INTRO_CHUNK), _document(db, bot, _ABOUT_US, _ABOUT_STORY_CHUNK)
 
 
 class TestTheRepositoryHelpers:
@@ -302,6 +495,74 @@ class TestThePinnedChunks:
         pinned = rs._company_fact_chunks(bot.client_id, bot.id, query, frozenset({"locations"}))
 
         assert [doc.id for doc in pinned] == [address.id, form.id]
+
+    @pytest.mark.parametrize("question", ["who are you guys exactly", "what do you guys do", "what is eventus"])
+    def test_an_identity_question_pins_the_about_page(self, db, question):
+        bot = _make_bot(db, _make_client(db))
+        _eventus_shaped_kb(db, bot)
+        intro, story = _about_page(db, bot)
+        _document(db, bot, f"{_SITE}/blog/who-are-you-guys-exactly/", "Who are you guys exactly? A blog post.")
+
+        kinds = rs._asks_company_facts(question, "Eventus Security")
+        pinned = rs._company_fact_chunks(bot.client_id, bot.id, question, kinds)
+
+        # The chunk under an "Our story" heading first, then the rest of the page.
+        assert [doc.id for doc in pinned] == [story.id, intro.id]
+
+    def test_an_identity_question_pins_the_chunks_that_describe_the_company(self, db):
+        """Production about pages open with the cookie notice and the site menu
+        (four chunks of them on both bots evaluated on 2026-09-30), and "who are
+        you guys exactly" has no keyword to rank by, so page order alone pinned
+        the menu and left the description out."""
+        bot = _make_bot(db, _make_client(db))
+        boilerplate = [
+            _document(db, bot, _ABOUT_US, "We value your privacy. We use cookies to enhance your browsing experience."),
+            _document(
+                db, bot, _ABOUT_US, "Functional cookies help perform certain functionalities. No cookies to display."
+            ),
+            _document(
+                db, bot, _ABOUT_US, "Reject All Accept All Services Managed SOC VAPT Red Teaming Company About Us"
+            ),
+            _document(db, bot, _ABOUT_US, "Resources Blogs Guides Case Studies Newsroom Contact Sales Book a Demo"),
+        ]
+        mission = _document(
+            db, bot, _ABOUT_US, "Our Vision: to be a trusted global leader in managed security services. Our Mission..."
+        )
+        who = _document(db, bot, _ABOUT_US, "## Who We Are\nA managed security services provider with a 24x7 SOC.")
+
+        pinned = rs._company_fact_chunks(bot.client_id, bot.id, "who are you guys exactly", frozenset({"about"}))
+
+        assert [doc.id for doc in pinned] == [mission.id, who.id, boilerplate[0].id, boilerplate[1].id]
+
+    def test_a_menu_or_footer_with_the_heading_words_is_not_a_description(self, db):
+        """A site menu lists "Our Story" and "What We Do", and a footer says
+        "Established 2017". Neither says what the company is, and the paragraph
+        that does may carry no such heading."""
+        bot = _make_bot(db, _make_client(db))
+        menu = _document(db, bot, _ABOUT_US, "Home About Us Our Story What We Do Why Choose Us Careers Book a Demo")
+        heading = _document(
+            db, bot, _ABOUT_US, "## Who We Are\nWe protect banks and telecoms from cyber attacks around the clock."
+        )
+        footer = _document(db, bot, _ABOUT_US, "Copyright 2024 Eventus. Established 2017. All rights reserved.")
+        prose = _document(
+            db,
+            bot,
+            _ABOUT_US,
+            "Eventus is a managed security services provider. We run 24x7 security operations centers "
+            "for banks and telecoms in 14 countries.",
+        )
+        sitemap = _document(db, bot, _ABOUT_US, "Founded in Ahmedabad. Sitemap Privacy Terms Cookies")
+
+        pinned = rs._company_fact_chunks(bot.client_id, bot.id, "who are you guys exactly", frozenset({"about"}))
+
+        assert [doc.id for doc in pinned] == [heading.id, prose.id, menu.id, footer.id]
+        assert sitemap.id not in [doc.id for doc in pinned]
+
+    def test_an_identity_question_pins_nothing_without_an_about_page(self, db):
+        bot = _make_bot(db, _make_client(db))
+        _eventus_shaped_kb(db, bot)
+
+        assert rs._company_fact_chunks(bot.client_id, bot.id, "who are you guys exactly", frozenset({"about"})) == []
 
     def test_capped(self, db):
         bot = _make_bot(db, _make_client(db))
@@ -411,6 +672,45 @@ class TestThePipeline:
         assert _answer_text(frames).endswith("GENERATED ANSWER")
         assert "Jeddah, KSA" in cap["prompts"][-1][1]
         assert "gate_relaxed_on_scope" in [name for name, _tags in metrics]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("relevant", [True, False])
+    async def test_who_are_you_guys_exactly_is_answered_from_the_about_page(self, db, monkeypatch, relevant):
+        """Production, 2026-09-30: refused as off-topic on one bot and answered
+        from blog posts on the other. The about page now leads what the judge
+        and the model read, and a judge that still scores low does not refuse."""
+        session_id = f"facts-about-{relevant}"
+        bot, cap, judge, metrics, _address, retrieved = _eventus_bot(db, monkeypatch, session_id, relevant=relevant)
+        intro, story = _about_page(db, bot)
+
+        frames = await _drive_stream(bot, "who are you guys exactly", session_id)
+
+        judged = judge.calls[-1][1]
+        assert [doc.id for doc in judged[:2]] == [story.id, intro.id]
+        assert judged[2:] == retrieved[:13], "the retrieved chunks keep their order behind the pinned ones"
+        assert "managed security services provider" in cap["prompts"][-1][1]
+        assert _answer_text(frames).endswith("GENERATED ANSWER")
+        pinned = [tags for name, tags in metrics if name == "company_facts_pinned"]
+        assert pinned and pinned[0]["pinned"] == 2 and pinned[0]["kinds"] == "about"
+        relaxed = "gate_relaxed_on_scope" in [name for name, _tags in metrics]
+        assert relaxed is not relevant
+
+    @pytest.mark.asyncio
+    async def test_with_nothing_to_read_it_gets_the_gap_line_not_the_scope_line(self, db, monkeypatch):
+        """No about page and nothing retrieved: there is nothing to ground an
+        answer in, and the question is still about the business."""
+        bot, cap, _judge, metrics, _address, _retrieved = _eventus_bot(
+            db, monkeypatch, "facts-about-empty", relevant=True
+        )
+        monkeypatch.setattr(rs, "reciprocal_rank_fusion", lambda *a, **k: [])
+
+        frames = await _drive_stream(bot, "what kind of company are you", "facts-about-empty")
+
+        assert cap["prompts"] == []
+        assert "I don't have that detail here." in _answer_text(frames)
+        pivots = [tags["reason"] for name, tags in metrics if name == "no_info_pivot"]
+        assert pivots == ["empty_retrieval_on_scope"]
+        assert "off_topic_refusal" not in [name for name, _tags in metrics]
 
     @pytest.mark.asyncio
     async def test_any_other_question_pins_nothing(self, db, monkeypatch):
