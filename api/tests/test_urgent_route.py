@@ -1234,6 +1234,13 @@ class TestTheFirstLineFitsTheMessage:
         "cant sleep, someone is inside our systems",
         "i'm scared, they are threatening to leak our data",
         "im freaking out, all our files are encrypted",
+        "i've been fired over this breach",
+        "i might get fired for this, the client data is gone",
+        "we are all panicking here, the site is down",
+        "my boss is freaking out about the leak",
+        "i am so stressed out, the attacker is still inside",
+        "I'm literally shaking, they emailed our customers",
+        "honestly i am completely overwhelmed by this incident",
     ],
 )
 def test_distress_wording_is_read(message):
@@ -1249,6 +1256,15 @@ def test_distress_wording_is_read(message):
         "the low priority queue is stuck",
         "we run a sleep clinic and our booking system was hacked",
         "our boss wants a report on the breach",
+        # Review 2026-09-30: a machine that panicked and alerts that fired are
+        # the incident, not a person who is not coping.
+        "kernel panicked on the db host right after the intrusion",
+        "alerts have been fired all night, someone is in our network",
+        "the rule got fired twice and the firewall is down",
+        "our servers are overwhelmed by a ddos right now",
+        "the api keeps breaking down since the attack",
+        "the process is crying out for memory after the breach",
+        "the dashboard is shaking and flickering after the hack",
         "",
         None,
         42,
@@ -1258,6 +1274,10 @@ def test_plain_incident_wording_is_not_distress(message):
     assert carries_distress(message) is False
 
 
-def test_distress_check_is_linear_on_long_input():
-    message = "feeling " * 5000 + "x"
+@pytest.mark.parametrize(
+    "message",
+    ["feeling " * 5000 + "x", "i am " * 8000, "we are all just so " * 2000, "my boss is " * 3500, "i" + " " * 40000],
+    ids=["feeling", "i-am", "we-are-all", "my-boss-is", "i-then-spaces"],
+)
+def test_distress_check_is_linear_on_long_input(message):
     assert timeit.timeit(lambda: carries_distress(message), number=1) < 0.5

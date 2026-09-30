@@ -73,6 +73,20 @@ logger = logging.getLogger(__name__)
 # to paste secrets; the second needs the distress acknowledged. A message in
 # crisis never reaches here: the router's crisis route answers it first.
 
+#: Who a word like "panicked" or "fired" must be said of to be distress: the
+#: visitor, or a person. "kernel panicked" and "alerts have been fired" are the
+#: incident itself (review, 2026-09-30).
+_PERSON_SUBJECT = (
+    r"(?:i|im|we|he|she|they|everyone|everybody"
+    r"|(?:my|our|the)\s+(?:boss|manager|team|staff|ceo|cto|founder|owner|colleagues?|employees?|clients?|customers?"
+    r"|wife|husband|partner|family))"
+)
+#: The words between that subject and the verb: "i'm", "we are all", "i might get".
+_SUBJECT_TO_VERB = (
+    r"(?:'m|'re|'ve|'ll|'s|'d)?\s+(?:(?:am|are|is|was|were|have|has|had|will|would|might|may|could|be|been|being"
+    r"|get|getting|got|going\s+to|gonna|about\s+to|all|just|so|really|totally|literally|absolutely|completely"
+    r"|honestly|already|now|still|kinda|probably)\s+){0,4}"
+)
 #: Distress a visitor says about themselves while reporting an incident. Every
 #: branch is literal words joined by bounded gaps, so the search is linear.
 _DISTRESS_RE = re.compile(
@@ -81,9 +95,10 @@ _DISTRESS_RE = re.compile(
     r"(?:low|down|hopeless|awful|terrible|horrible|sick|scared|anxious|depressed|numb|lost|helpless|worthless)"
     r"|(?:haven'?t|havent|hasn'?t|hasnt|not|no)\s+(?:slept|sleep|sleeping)|can'?t\s+sleep|cant\s+sleep"
     r"|blam(?:ing|es|ed)\s+me|my\s+fault"
-    r"|panick(?:ing|ed)|freaking\s+out|stressed\s+out|breaking\s+down|in\s+tears|crying|overwhelmed|shaking"
-    r"|terrified|i'?m\s+scared|im\s+scared|hopeless"
-    r"|(?:lose|losing)\s+my\s+job|(?:get|getting|be|been)\s+fired|sacked"
+    rf"|{_PERSON_SUBJECT}{_SUBJECT_TO_VERB}"
+    r"(?:panick(?:ing|ed)|freaking\s+out|stressed\s+out|breaking\s+down|crying|overwhelmed|shaking|fired|sacked)"
+    r"|in\s+tears|terrified|i'?m\s+scared|im\s+scared|hopeless"
+    r"|(?:lose|losing)\s+my\s+job"
     r")\b"
 )
 
