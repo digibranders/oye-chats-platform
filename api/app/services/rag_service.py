@@ -2578,6 +2578,11 @@ def _question_looks_on_scope(question: str, company_name: str | None) -> bool:
             return True
     if _ON_SCOPE_HINTS_RE.search(question):
         return True
+    # A question about the company's own facts can address it with "you" alone
+    # ("what do you guys do", "what kind of company are you"), which the hints
+    # leave out on purpose.
+    if _asks_company_facts(question, company_name):
+        return True
     # No Latin words at all: the regex above was never able to speak for this
     # question, so its False is "unknown", not "off-scope". Fail soft.
     return not _has_latin_words(question)

@@ -267,6 +267,19 @@ class TestTheQuestionIsRecognised:
         assert rs._question_is_clearly_on_scope(question, "Eventus Security") is False
 
     @pytest.mark.parametrize(
+        "question", ["what do you guys do", "what kind of company are you", "what is this company"]
+    )
+    def test_a_question_about_who_the_company_is_looks_on_scope(self, question):
+        """With nothing retrieved, the generous predicate picks the reply: the
+        honest gap line for a question about the business, the scope line for
+        anything else."""
+        assert rs._question_looks_on_scope(question, "Eventus Security") is True
+
+    @pytest.mark.parametrize("question", ["what do you do for fun", "what is the capital of france"])
+    def test_the_negatives_do_not_look_on_scope(self, question):
+        assert rs._question_looks_on_scope(question, "Eventus Security") is False
+
+    @pytest.mark.parametrize(
         "text",
         [
             "where are the " * 2000,
@@ -581,6 +594,23 @@ class TestThePipeline:
         assert pinned and pinned[0]["pinned"] == 2 and pinned[0]["kinds"] == "about"
         relaxed = "gate_relaxed_on_scope" in [name for name, _tags in metrics]
         assert relaxed is not relevant
+
+    @pytest.mark.asyncio
+    async def test_with_nothing_to_read_it_gets_the_gap_line_not_the_scope_line(self, db, monkeypatch):
+        """No about page and nothing retrieved: there is nothing to ground an
+        answer in, and the question is still about the business."""
+        bot, cap, _judge, metrics, _address, _retrieved = _eventus_bot(
+            db, monkeypatch, "facts-about-empty", relevant=True
+        )
+        monkeypatch.setattr(rs, "reciprocal_rank_fusion", lambda *a, **k: [])
+
+        frames = await _drive_stream(bot, "what kind of company are you", "facts-about-empty")
+
+        assert cap["prompts"] == []
+        assert "I don't have that detail here." in _answer_text(frames)
+        pivots = [tags["reason"] for name, tags in metrics if name == "no_info_pivot"]
+        assert pivots == ["empty_retrieval_on_scope"]
+        assert "off_topic_refusal" not in [name for name, _tags in metrics]
 
     @pytest.mark.asyncio
     async def test_any_other_question_pins_nothing(self, db, monkeypatch):
