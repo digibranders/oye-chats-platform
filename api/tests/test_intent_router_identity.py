@@ -119,12 +119,47 @@ def test_questions_about_something_else_are_not_is_ai(msg):
 
 
 @pytest.mark.parametrize(
-    "msg", ["who am i talking to", "who am i chatting with?", "who am i speaking to", "what are you", "what are u?"]
+    "msg",
+    [
+        "who am i talking to",
+        "who am i chatting with?",
+        "who am i speaking to",
+        "what are you",
+        "what are u?",
+        "who are you",
+        "who are you?",
+        "who are you exactly",
+        "who r u",
+        "so who r u?",
+    ],
 )
 def test_asking_who_is_on_the_other_end_routes_to_bot_name(msg):
     routed = route_intent(msg, COMPANY)
     assert routed is not None, msg
     assert routed.intent == "bot_name", msg
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # Evaluation 2026-09-28 (y-e16-who-are-you): both production bots answered
+        # "who are you guys exactly" with the bot-name line instead of what the
+        # company does.
+        "who are you guys exactly",
+        "who are you guys",
+        "who are you guys?",
+        "who r u guys",
+        "who are u guys",
+        "who are you people",
+        "who are you all",
+        "who are you lot",
+        "who are you folks",
+        "who are you as a company",
+    ],
+)
+def test_asking_who_the_company_is_reaches_retrieval(msg):
+    routed = route_intent(msg, COMPANY)
+    assert routed is None, (msg, routed)
 
 
 @pytest.mark.parametrize(
@@ -166,10 +201,45 @@ def test_name_recall_phrasings_route_to_name_recall(msg):
 @pytest.mark.parametrize(
     "msg",
     [
+        # Evaluation 2026-09-28 (w-long-seven-turns): "ok. and whats my name btw"
+        # missed the anchored pattern on both production bots and fell through to
+        # a scope refusal, so the visitor's name looked lost.
+        "ok. and whats my name btw",
+        "ok, and what's my name btw?",
+        "and whats my name",
+        "btw whats my name",
+        "so, what's my name again?",
+        "wait, do you remember my name?",
+        "hey quick question, what's my name",
+        "whats my name lol",
+        "what's my name by the way",
+        "ok and who am i then",
+        "sorry, what did i say my name was",
+        "haha ok whats my name tho",
+    ],
+)
+def test_name_recall_with_fillers_around_it_still_routes(msg):
+    routed = route_intent(msg, COMPANY, visitor_name="Priya")
+    assert routed is not None, msg
+    assert routed.intent == "name_recall", msg
+    assert "You're Priya." in routed.answer
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
         "what name should i use for the invoice",
         "whats my name on the account",
         "do you know my name is on the contract",
         "what's my plan",
+        # A real question around the recall words still reaches retrieval.
+        "ok and what's my name in your system",
+        "and what name do you have for the reservation",
+        "so whats my name on the booking btw",
+        "btw do you know my name is misspelt on the invoice",
+        "what's my name and address on file",
+        "who am i supposed to contact",
+        "tell me my name and my order status",
     ],
 )
 def test_other_questions_about_names_are_not_recall(msg):
@@ -271,6 +341,11 @@ def test_product_questions_about_remembering_are_not_the_memory_route(msg):
         "is this " * 2500,
         "bakwas " * 3000,
         "what name do u have for me " * 800,
+        "ok. and whats my name btw " * 800,
+        "btw " * 5000 + "whats my name",
+        "whats my name " + "lol " * 5000,
+        "who are you guys " * 1200,
+        "who r u " * 2500,
         "am i talking to a " * 1200,
         "human or " * 2500,
         "is that a real person " * 900 + "photo",

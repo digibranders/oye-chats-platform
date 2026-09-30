@@ -256,7 +256,11 @@ _WHO_MADE_YOU_RE = re.compile(
 _BOT_NAME_RE = re.compile(
     r"(?ix)\b(?:"
     r"what(?:'s|\s+is)\s+your\s+name"
-    r"|who\s+are\s+you"
+    # "who are you", "who r u". Not the plural or the company: "who are you
+    # guys", "who are you people", "who r u all" ask what the business is, and
+    # the knowledge base answers that. Evaluation 2026-09-28: "who are you guys
+    # exactly" got the bot-name line on both production bots.
+    r"|who\s+(?:are|r)\s+(?:you|u)(?!\s+(?:guys|people|all|lot|folks|team|company|as\s+a)\b)"
     # "who am i talking to" and a bare "what are you", as the whole message only:
     # "what are you offering this month" is a question for the knowledge base.
     r"|^who\s+am\s+i\s+(?:talking|chatting|speaking)\s+(?:to|with)$"
@@ -558,14 +562,18 @@ _UNCLEAR_RE = re.compile(
     r"|[b-df-hj-np-tv-xz]{6,}"
     r"|[a-z]*(?:asdf|sdfg|dfgh|fghj|ghjk|hjkl|qwer|werty|rtyu|tyui|yuio|uiop|zxcv)[a-z]*)$"
 )
-# "What name do you have for me?" Whole message only and anchored at both ends,
-# so it needs no word-count gate: "so what name do u have for me now" is nine
-# words and got an off-topic refusal on 2026-09-11. A question that only mentions
-# a name ("what name should i use for the invoice", "whats my name on the
-# account") does not match.
+# "What name do you have for me?" The recall phrase is searched, and the rest of
+# the message must be filler (see ``_NAME_RECALL_FILLER``), so it needs no
+# word-count gate: "so what name do u have for me now" is nine words and got an
+# off-topic refusal on 2026-09-11, and "ok. and whats my name btw" missed the
+# pattern when it was anchored at both ends and allowed one opener, so both
+# production bots fell through to a scope refusal (evaluation 2026-09-28,
+# w-long-seven-turns). A question that only mentions a name ("what name should i
+# use for the invoice", "whats my name on the account") leaves words that are
+# not filler, so it does not match. Every branch is literal words joined by
+# ``\s+``, so the search is linear.
 _NAME_RECALL_RE = re.compile(
-    r"^(?:(?:so|ok|okay|and|then|hey|hmm|wait)\s+)?"
-    r"(?:what(?:'s|s|\s+is)\s+my\s+name"
+    r"\b(?:what(?:'s|s|\s+is)\s+my\s+name"
     r"|what\s+name\s+(?:do|did|have)\s+(?:you|u)\s+(?:have|got|get|save|saved|use|know)(?:\s+(?:for|of|on)\s+me)?"
     r"|what\s+name\s+did\s+i\s+give(?:\s+(?:you|u))?"
     r"|what\s+did\s+i\s+(?:say|tell\s+(?:you|u))\s+my\s+name\s+(?:was|is)"
@@ -573,9 +581,29 @@ _NAME_RECALL_RE = re.compile(
     r"|remember\s+my\s+name"
     r"|(?:tell\s+me|say)\s+my\s+name"
     r"|what\s+(?:do|will|did)\s+(?:you|u)\s+call\s+me"
-    r"|who\s+am\s+i)"
-    r"(?:\s+(?:now|again|then))?$"
+    r"|who\s+am\s+i)\b"
 )
+#: Words that may sit around the recall phrase and leave it a recall: openers,
+#: closers, politeness and the visitor's own hesitation. Anything else ("on the
+#: account", "for the reservation", "in your system") makes the message a
+#: question the pipeline answers.
+_NAME_RECALL_FILLER = frozenset(
+    {
+        "so", "ok", "okay", "k", "and", "then", "hey", "hi", "hello", "hmm", "hm", "wait", "btw", "by", "the", "way",
+        "also", "oh", "um", "uh", "alright", "right", "cool", "anyway", "anyways", "well", "yeah", "yes", "actually",
+        "first", "quick", "quickly", "question", "one", "more", "thing", "lol", "haha", "please", "pls", "plz",
+        "tho", "though", "now", "again", "exactly", "already", "sorry", "thanks", "thank", "you", "just", "curious",
+        "i", "forgot", "remind", "me", "still", "tbh", "lmao", "out", "of", "curiosity",
+    }
+)  # fmt: skip
+_NAME_RECALL_WORD_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
+
+
+def _asks_own_name(norm: str) -> bool:
+    """Whether the normalised message asks the bot for the visitor's own name and nothing else."""
+    rest, hits = _NAME_RECALL_RE.subn(" ", norm)
+    return hits > 0 and all(word in _NAME_RECALL_FILLER for word in _NAME_RECALL_WORD_RE.findall(rest))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Response shape
@@ -970,8 +998,8 @@ def route_intent(
         return _unclear(company_name, support_enabled)
 
     # 5) Small talk and social reflexes, whole message only. Name recall sits
-    #    outside the word gate because its pattern is anchored at both ends.
-    if _NAME_RECALL_RE.match(norm):
+    #    outside the word gate because everything around its phrase must be filler.
+    if _asks_own_name(norm):
         return _name_recall(company_name, visitor_name)
     if word_count <= 8:
         if _HOW_ARE_YOU_RE.match(norm):
