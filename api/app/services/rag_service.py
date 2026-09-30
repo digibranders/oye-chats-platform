@@ -20,7 +20,7 @@ from sqlalchemy.orm import joinedload
 from app import config
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
 from app.core.embedding_profiles import EMBEDDING_PROFILE_LEGACY, normalize_profile, query_task_type
-from app.core.langfuse_client import get_langfuse, langfuse_generation, redact_pii
+from app.core.langfuse_client import get_langfuse, langfuse_generation, redact_pii, redact_secrets
 from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter, increment_metric_counter_by
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
@@ -78,8 +78,10 @@ from app.services.document_request import (
     decide_document_intent,
     document_reply,
     fallback_document_intent,
+    is_another_kind,
     looks_like_a_document_request,
     mentions_document,
+    names_a_topic,
     pick_documents,
     refers_back,
 )
@@ -90,7 +92,7 @@ from app.services.email_service import (
     send_qualified_lead_email,
 )
 from app.services.groundedness_gate import check_groundedness, should_sample
-from app.services.handoff_reply import handoff_reply, unhelped_offer
+from app.services.handoff_reply import handoff_reply, handoff_waiting_reply, requested_thing, unhelped_offer
 from app.services.intent_router import (
     care_note,
     crisis_reply,
@@ -144,6 +146,7 @@ from app.services.price_intent import (
     guard_asks_price,
     might_ask_price,
     non_price_remainder,
+    rewrite_adds_no_price_word,
 )
 from app.services.qualification_service import (
     calculate_composite_score,
@@ -1447,16 +1450,23 @@ def _mark_media_card_shown(chat_session, card: dict | None) -> None:
 
 
 def _referred_documents(
-    history: list, company_name: str | None, catalog: list[dict], owned: frozenset[str]
+    question: str, history: list, company_name: str | None, catalog: list[dict], owned: frozenset[str]
 ) -> DocumentPick | None:
     """The files a request that points back ("is there a pdf of this") means, or None.
 
     The download card the last reply carried, with its chip, is the file "this"
     points at (evaluation, 2026-09-17: a turn after a card was attached answered
     "I don't have a downloadable document for that here"). A last reply without
-    one leaves the topic of the visitor's previous message, whose files are
-    picked as that message would have picked them. ``history`` ends with the
-    current message.
+    one leaves the topic of the nearest earlier visitor message that names one,
+    whose files are picked as that message would have picked them: an "ok" or
+    an earlier "is there a pdf of this" in between names nothing and is walked
+    past. ``history`` ends with the current message.
+
+    A file is only handed back for a request it fits. ``question`` naming
+    another kind of document ("pls share a brochure" after a reply carrying a
+    case study) is not pointing at that file, so it is left out, and with
+    nothing left the request is answered on its own words (review, 2026-09-30:
+    it got "Here you go: **aurascape case study**").
     """
     earlier = list(history or [])[:-1]
     last_bot = next((m for m in reversed(earlier) if _msg_role(m) == "bot"), None)
@@ -1471,12 +1481,16 @@ def _referred_documents(
             and is_owned_file_url(card.get("url"), owned)
         )
         if docs:
-            return DocumentPick(docs=docs[:2], exact=True)
-    previous = next((m for m in reversed(earlier) if _msg_role(m) == "user"), None)
-    if previous is None:
-        return None
-    pick = pick_documents(_msg_content(previous), company_name, catalog)
-    return pick if pick.docs else None
+            fitting = [card for card in docs if not is_another_kind(question, card)]
+            return DocumentPick(docs=fitting[:2], exact=True) if fitting else None
+    for previous in (m for m in reversed(earlier) if _msg_role(m) == "user"):
+        content = _msg_content(previous)
+        if not names_a_topic(content, company_name):
+            continue
+        pick = pick_documents(content, company_name, catalog)
+        fitting = [card for card in pick.docs if not is_another_kind(question, card)]
+        return DocumentPick(docs=fitting, exact=pick.exact) if fitting else None
+    return None
 
 
 def _owned_bot_catalog(session, bot_id: int, owned: frozenset[str]) -> list[dict]:
@@ -3083,8 +3097,26 @@ def _build_reference_context(final_results: list, company_name: str | None) -> s
 # rest of the session re-injected them in full. Compounding AR-19's
 # context-token budget on every later turn with content that's almost never
 # load-bearing for the conversation (a wall of pasted text, not a genuine
-# multi-thousand-char question).
-_HISTORY_MESSAGE_MAX_CHARS = 500
+# multi-thousand-char question). This is the VISITOR cap.
+_HISTORY_MESSAGE_MAX_CHARS = 800
+
+# The bot's own previous reply is load-bearing: "the last one", "tell me more
+# about the third", "summarise this" all point at it. Production, Eventus,
+# 2026-09-28 (y-e04-last-one): a 21-item service list cut at 500 characters
+# ended "- **Penetration T [truncated]", so the answer model took Penetration
+# Testing as the last item, while the query rewrite (which reads the rows
+# untruncated) had resolved it correctly. The same cut made a recap turn
+# rebuild the list from retrieved press releases and add services the bot never
+# mentioned. RULE 1 tells the model to give a very long list as a count plus
+# the main names, so a reply rarely nears this cap; it bounds a pathological
+# reply, not a normal one. Two replies at this cap plus three visitor turns at
+# theirs is about 2,100 tokens of history, all in the per-turn user message,
+# so the cached system prefix is unaffected.
+_HISTORY_REPLY_MAX_CHARS = 3000
+
+# First line of the history block whenever a message had to be cut, so the
+# model reads "[truncated]" as "this went on" rather than as the end of a list.
+_HISTORY_TRUNCATION_NOTE = "(a message ending in [truncated] continued beyond what is shown here)"
 
 
 # Stand-in written into the prompt in place of a visitor turn the injection
@@ -3094,9 +3126,34 @@ _HISTORY_MESSAGE_MAX_CHARS = 500
 _HISTORY_BLOCKED_PLACEHOLDER = "[message withheld: blocked by input safety check]"
 
 
+def _history_message_cap(role: str | None) -> int:
+    """The bot's replies get ``_HISTORY_REPLY_MAX_CHARS``; every other role,
+    the visitor's cap."""
+    return _HISTORY_REPLY_MAX_CHARS if role in ("bot", "assistant", "operator") else _HISTORY_MESSAGE_MAX_CHARS
+
+
+def _cut_at_line_boundary(content: str, cap: int) -> str:
+    """Cut ``content`` to at most ``cap`` characters on a line boundary.
+
+    The cut lands at the last newline within the cap, so a list is never left
+    mid-item (the model reads a half-written bullet as a complete one). When the
+    text has no usable line boundary in the first half of the cap (one unbroken
+    line), it is cut hard at the cap instead. Callers add the marker.
+    """
+    head = content[:cap]
+    boundary = head.rfind("\n")
+    if boundary >= cap // 2:
+        return head[:boundary].rstrip()
+    return head
+
+
 def _build_history_context(history: list) -> str:
-    """Join chat history into the ``role: content`` block used by the prompt,
-    truncating each message's content to ``_HISTORY_MESSAGE_MAX_CHARS`` first.
+    """Join chat history into the ``role: content`` block used by the prompt.
+
+    Each message is bounded by its role's cap (``_history_message_cap``), and a
+    message over its cap is cut at a line boundary with a ``[truncated]``
+    marker; the block then opens with ``_HISTORY_TRUNCATION_NOTE`` so the model
+    knows the marker means the message continued.
 
     Visitor turns that tripped :func:`is_visitor_injection_attempt` are replaced
     with ``_HISTORY_BLOCKED_PLACEHOLDER``. The guard runs AFTER the visitor's
@@ -3107,14 +3164,20 @@ def _build_history_context(history: list) -> str:
     every subsequent turn of the session defeats the guard entirely.
     """
     lines = []
+    truncated = False
     for m in history:
         content = m.content or ""
-        if _msg_role(m) == "user" and is_visitor_injection_attempt(content):
+        role = _msg_role(m)
+        if role == "user" and is_visitor_injection_attempt(content):
             lines.append(f"{m.role}: {_HISTORY_BLOCKED_PLACEHOLDER}")
             continue
-        if len(content) > _HISTORY_MESSAGE_MAX_CHARS:
-            content = content[:_HISTORY_MESSAGE_MAX_CHARS] + " [truncated]"
+        cap = _history_message_cap(role)
+        if len(content) > cap:
+            content = _cut_at_line_boundary(content, cap) + " [truncated]"
+            truncated = True
         lines.append(f"{m.role}: {content}")
+    if truncated:
+        lines.insert(0, _HISTORY_TRUNCATION_NOTE)
     return "\n".join(lines)
 
 
@@ -3727,7 +3790,7 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
       visitor who has not joined the queue, and a tap opens the conversation.
 
     The visitor's name and contact come from the stored lead, never from the
-    message, which is quoted in the email as it was written.
+    message, which is quoted in the email as it was written, secrets scrubbed.
 
     Without an email or a phone on the lead, all three say so (the owner's
     report of 2026-09-28: an alert with only a name), and a worker job is
@@ -3768,7 +3831,8 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
         logger.warning("urgent_incident_notification_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
         session.rollback()
 
-    reason = (visitor_message or "").strip()[:_URGENT_EMAIL_MESSAGE_LIMIT]
+    # Secrets are scrubbed before the cut, so a truncated key never survives it.
+    reason = (redact_secrets(visitor_message) or "").strip()[:_URGENT_EMAIL_MESSAGE_LIMIT]
     for recipient in recipients:
         try:
             send_handoff_request_email(
@@ -6619,6 +6683,245 @@ def gap_team_offer(*, support_enabled: bool, live_chat_enabled: bool, within_bus
     return TEAM_MESSAGE_OFFER
 
 
+# ── What the visitor's CURRENT message already tells us ──────────────────────
+# The qualification extractor runs on the ARQ worker after the reply, so its
+# value for a dimension lands one turn late. Production, CleanStart,
+# 2026-09-28 (y-e22-timeline-reply): the visitor said "about 3 months" and the
+# prompt for that same turn still showed "Timeline: Not yet identified" and
+# asked for a timeline. These deterministic checks read the current message
+# for the dimension the block is about to ask, so the state can show it and
+# the question is not asked. They are conservative on purpose: a miss costs
+# one repeated question, a false hit costs one skipped question and a wrong
+# line in a per-turn prompt that nothing persists. A message opening with an
+# interrogative ("do you offer 12 months of support?") is never a statement.
+
+_MONTH_NAMES = (
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+    r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+)
+_SMALL_NUMBER_WORDS = r"a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|couple of|few|several"
+
+# Every repeat below is bounded, so the patterns read a message in linear time:
+# they run on the event loop. A number is at most four digits ("18 months",
+# never an order number), a second one only follows "-", "to" or "or", and a gap
+# is at most three spaces; an unbounded ``\d+`` twice in a row took 0.30 s on
+# 5,000 digits (review, 2026-09-30).
+_TIMELINE_STATED_RE = re.compile(
+    r"(?i)(?:"
+    rf"(?<![\w.,])(?:\d{{1,4}}|{_SMALL_NUMBER_WORDS})"
+    rf"(?:\s{{0,3}}(?:-|to|or)\s{{0,3}}(?:\d{{1,4}}|{_SMALL_NUMBER_WORDS}))?\+?\s{{0,3}}"
+    r"(?:days?|weeks?|months?|quarters?|years?)\b"
+    r"|\b(?:this|next|coming|end of (?:this|the|next)|by the end of (?:this|the|next))\s{1,3}(?:week|month|quarter|year)\b"
+    rf"|\bby\s{{1,3}}(?:(?:early|mid|late|end of)\s{{1,3}})?(?:{_MONTH_NAMES})\b"
+    r"|\bq[1-4]\b"
+    r"|\b(?:asap|as soon as possible|immediately|right away|straight away|urgently)\b"
+    r"|\bno\s{1,3}(?:(?:fixed|specific|particular|firm|set)\s{1,3})?(?:timeline|timeframe|time frame|deadline|rush)\b"
+    r")"
+)
+
+# A duration, a date or "asap" is a timeline only when it is about what comes
+# next. Review 2026-09-30: "we've been in business 10 years" and "if we cancel
+# after 6 months do we get any refund?" were both recorded as the visitor's
+# timeline. A match is dropped when its own clause opens as a conditional or a
+# hypothetical, when a word about the past sits within three words before it,
+# or when the words straight after it make it an age, a tenure or a contract
+# term. Each is read in a window of ``_TIMELINE_CONTEXT_CHARS`` around the
+# match, so the check stays linear.
+_TIMELINE_CONTEXT_CHARS = 80
+_TIMELINE_HYPOTHETICAL_BEFORE_RE = re.compile(
+    r"(?i)\b(?:if|suppose|supposing|assuming|provided|unless|whether|once|in case|say we|let'?s say)\b"
+    r"[^.?!,;\n]{0,70}$"
+)
+_TIMELINE_PAST_BEFORE_RE = re.compile(
+    r"(?i)\b(?:been|since|was|were|had|last|past|previous|every|each|per)\b(?:\s{1,3}[\w'-]{1,20}){0,3}\s{0,3}$"
+)
+_TIMELINE_NOT_AHEAD_AFTER_RE = re.compile(
+    r"(?i)^\s{0,3}(?:-\s{0,3})?(?:ago|old|back|earlier|of\s{1,3}experience|experience|in\s{1,3}business|contract"
+    r"|term|plan|subscription|trial|warranty|notice|commitment|lock-?in|retention)\b"
+)
+
+
+def _stated_timeline(text: str) -> re.Match[str] | None:
+    """The first span of ``text`` that states when the visitor wants to move, or None."""
+    for match in _TIMELINE_STATED_RE.finditer(text):
+        before = text[max(0, match.start() - _TIMELINE_CONTEXT_CHARS) : match.start()]
+        after = text[match.end() : match.end() + _TIMELINE_CONTEXT_CHARS]
+        if (
+            _TIMELINE_HYPOTHETICAL_BEFORE_RE.search(before)
+            or _TIMELINE_PAST_BEFORE_RE.search(before)
+            or _TIMELINE_NOT_AHEAD_AFTER_RE.match(after)
+        ):
+            continue
+        return match
+    return None
+
+
+_ROLE_WORDS = (
+    r"(?:ceo|cto|cfo|coo|cio|ciso|cmo|founder|co-?founder|owner|director|head|vp|vice president|manager|"
+    r"lead|partner|president|principal|proprietor|decision[- ]maker|budget owner)"
+)
+# The words between "I'm researching" and "for my manager", or between "my
+# boss" and "decides": one sentence's worth, never the rest of the message.
+_AUTHORITY_GAP = r"[^.?!\n]{0,80}"
+# Who a visitor researches for when the decision is someone else's. A person or
+# a body that decides, never the visitor's own company, team or product:
+# "i am looking for a SOC provider for my company" says nothing about who
+# decides (review, 2026-09-30).
+_DECIDER_WORDS = (
+    r"(?:boss|manager|supervisor|ceo|cto|cfo|coo|cio|ciso|director|founder|co-?founder|owner|head|vp|client"
+    r"|customer|board|leadership|management|principal|partner|employer|colleague|friend)"
+)
+_AUTHORITY_STATED_RE = re.compile(
+    r"(?i)(?:"
+    rf"\bi(?:'m| am)\s{{1,3}}(?:(?:the|a|an|our|its|their)\s{{1,3}})?(?:[\w-]{{1,30}}\s{{1,3}})?{_ROLE_WORDS}\b"
+    r"|\bi\s{1,3}(?:make|take|own|have)\s{1,3}the\s{1,3}(?:final\s{1,3}|buying\s{1,3}|purchasing\s{1,3})?"
+    r"(?:decision|call|say)\b"
+    r"|\bi\s{1,3}(?:decide|sign off|approve)\b"
+    r"|\b(?:it'?s|that'?s)\s{1,3}my\s{1,3}(?:decision|call)\b"
+    r"|\bi(?:'m| am)\s{1,3}(?:just\s{1,3})?(?:researching|looking|asking|checking|gathering|scoping)\b"
+    rf"{_AUTHORITY_GAP}\b(?:for|on behalf of)\s{{1,3}}"
+    rf"(?:(?:my|our|the|a)\s{{1,3}}{_DECIDER_WORDS}|someone|somebody)\b"
+    r"|\b(?:my|our|the)\s{1,3}(?:boss|manager|ceo|cto|cfo|director|team|board|founder|owner|partners?|committee)\b"
+    rf"{_AUTHORITY_GAP}"
+    r"\b(?:decides?|will decide|makes? the (?:final\s{1,3})?(?:decision|call)|has to (?:approve|sign off)|signs? off|approves?)\b"
+    r")"
+)
+
+_BUDGET_STATED_RE = re.compile(
+    r"(?i)(?:"
+    r"\bno\s{1,3}(?:(?:fixed|set|specific|particular|firm|real)\s{1,3})?budget\b"
+    r"|\bbudget\s{1,3}(?:is|of|around|about|would be|is around|is about|sits at)\b"
+    r")"
+)
+
+# Framework dimension keys are configurable (BANT, MEDDIC, GPCT, ...), so a
+# dimension is matched to a detector by what its key names, not by an exact
+# key. Anything else (need, goals, metrics, ...) has no deterministic detector:
+# the visitor's need is whatever they are asking about.
+_DIMENSION_KIND_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("timeline", ("timeline", "timing", "timeframe", "time_frame", "schedule", "urgency")),
+    ("budget", ("budget", "money", "spend", "investment")),
+    ("authority", ("authority", "decision", "buyer", "role")),
+)
+
+# A short message is recorded whole ("about 3 months" reads better than
+# "3 months"); a long one is recorded by the span that stated the dimension.
+_STATED_VALUE_WHOLE_MESSAGE_WORDS = 15
+_STATED_VALUE_MAX_CHARS = 160
+# A qualification answer is a line, not a paste: only the opening of a long
+# message is read. This also bounds ``_states_budget_amount``, whose money
+# detector is not linear in a run of digits or spaces.
+_STATED_SCAN_CHARS = 300
+
+
+def _dimension_kind(dimension: str) -> str | None:
+    key = (dimension or "").lower()
+    for kind, hints in _DIMENSION_KIND_HINTS:
+        if any(hint in key for hint in hints):
+            return kind
+    return None
+
+
+def _stated_value(question: str, span: str | None) -> str:
+    whole = " ".join(question.split())
+    if len(whole.split()) <= _STATED_VALUE_WHOLE_MESSAGE_WORDS:
+        return whole
+    return " ".join((span or whole).split())[:_STATED_VALUE_MAX_CHARS]
+
+
+def _current_turn_states_dimension(question: str, dimension: str) -> str | None:
+    """The value the visitor's current message gives for ``dimension``, or None.
+
+    Reuses ``_states_budget_amount`` (the money detector the scoring path uses)
+    for budget, plus phrase patterns for timeline, authority and a budget stated
+    without an amount. Returns the text to show in the qualification state.
+    """
+    q = (question or "").strip()[:_STATED_SCAN_CHARS]
+    if not q or _QUESTION_LEAD_RE.match(q):
+        return None
+    kind = _dimension_kind(dimension)
+    if kind == "timeline":
+        match = _stated_timeline(q)
+    elif kind == "authority":
+        match = _AUTHORITY_STATED_RE.search(q)
+    elif kind == "budget":
+        match = _BUDGET_STATED_RE.search(q)
+        if match is None and _states_budget_amount(q):
+            return _stated_value(q, None)
+    else:
+        return None
+    if match is None:
+        return None
+    return _stated_value(q, match.group(0))
+
+
+def _state_with_current_turn(
+    bant_state: dict | None, question: str, framework_config: dict
+) -> tuple[dict, dict[str, str]]:
+    """The qualification state with what the visitor's current message states merged in.
+
+    Returns ``(state, stated_now)``. ``stated_now`` maps each OPEN dimension the
+    message gives a value for to that value (``_current_turn_states_dimension``);
+    a stored value always wins. ``state`` is a copy carrying those values, or
+    ``bant_state`` itself when the message states nothing. Nothing is written
+    to the session: the extractor records the value, with its score, after the
+    reply.
+
+    The pipeline computes this once per turn and hands the same state to the
+    probe selector (whose pick it persists as ``last_probed_dimension``) and to
+    ``build_hybrid_prompt``, so what the prompt asks about is what the session
+    records as asked. Review 2026-09-30: the merge lived inside the prompt
+    builder only, so the prompt asked AUTHORITY while the session recorded
+    timeline.
+    """
+    state = bant_state or {}
+    order = framework_config.get("conversation_order") or _framework_dimensions(framework_config)
+    stated_now: dict[str, str] = {}
+    for dim in order:
+        if state.get(dim):
+            continue
+        stated = _current_turn_states_dimension(question, dim)
+        if stated:
+            stated_now[dim] = stated
+    return ({**state, **stated_now} if stated_now else state), stated_now
+
+
+# A recap turn: the visitor wants this conversation summarised (for a boss, a
+# colleague, themselves). Production, CleanStart, 2026-09-28 (w-recap-for-boss):
+# "summarise this for my boss" got a qualifying question. A recap needs a verb
+# AND something that anchors it to the conversation, so "do you have a summary
+# of your services?" and "can you summarise what your SOC service includes" stay
+# ordinary product questions. The anchors are the conversation itself ("this
+# chat", "so far", "the above"), what was said in it ("what we discussed",
+# "what you told me") and who it is for ("for my boss", "to my manager").
+# Review 2026-09-30: the w-recap-for-boss message itself, "ok summarise what you
+# told me in 3 short bullets, ill fwd it to my boss", matched no anchor.
+_RECAP_VERB_RE = re.compile(
+    r"(?i)\b(?:summari[sz]e|summary|recap|sum (?:it |this |that |everything |all |it all )?up|tl;?dr|rundown|wrap[- ]?up|overview)\b"
+)
+_RECAP_ANCHOR_RE = re.compile(
+    r"(?i)(?:"
+    r"\b(?:this|that|our|the|whole|entire)\s+(?:chat|conversation|discussion|thread|exchange)\b"
+    r"|\bwhat we(?:'ve| have)?\s+(?:discussed|covered|talked about|said|gone over)\b"
+    r"|\b(?:everything|all)\s+(?:of\s+)?(?:this|that|so far|above|we(?:'ve| have)?\s+(?:discussed|covered|talked about))\b"
+    r"|\bwhat\s+(?:you|u)(?:'ve|\s+have)?\s+(?:just\s+)?"
+    r"(?:told\s+(?:me|us)|said|mentioned|explained|shared|covered|listed|wrote)\b"
+    r"|\bso far\b"
+    r"|\bthe above(?![\w-])"
+    r"|\b(?:for|to|with) my (?:boss|manager|team|ceo|cto|director|colleagues?|lead|head|client)\b"
+    r"|\b(?:summari[sz]e|recap|sum up)\s+(?:this|that|it|everything|all this|all that)\b"
+    r"|\bsum (?:it|this|that|everything|it all|all this|all that) up\b"
+    r"|^\s*tl;?dr[\s?!.]*$"
+    r")"
+)
+
+
+def _is_recap_turn(question: str) -> bool:
+    """True when the visitor asks for a summary or recap of this conversation."""
+    q = question or ""
+    return bool(_RECAP_VERB_RE.search(q) and _RECAP_ANCHOR_RE.search(q))
+
+
 def build_hybrid_prompt(
     client,
     question: str,
@@ -6694,6 +6997,20 @@ def build_hybrid_prompt(
     # opinion (``field_question``) let it through. Adds one per-turn line
     # telling the model to explain the concept and say whether we offer it.
     field_question: bool = False,
+    # The team has been alerted to an urgent incident in this conversation
+    # (``urgent_followup.is_urgent_session``). No qualifying question on any
+    # later turn of the session: an incident is not a sales moment. Production,
+    # 2026-09-28 (x-urgent-do-you-handle): the flag never reached the prompt,
+    # so the turn after an incident report ended "How urgent is this right now?".
+    urgent_session: bool = False,
+    # The visitor asked for a summary or recap of the conversation
+    # (``_is_recap_turn``). Same hold (production, 2026-09-28, w-recap-for-boss).
+    recap_turn: bool = False,
+    # What the visitor's current message states, already merged into
+    # ``bant_state`` by the caller (``_state_with_current_turn``), which picks
+    # the dimension it persists from that same state. None: the builder reads
+    # the message itself.
+    stated_now: dict[str, str] | None = None,
 ) -> tuple[str, str]:
     """Construct the Hybrid RAG prompt with BANT qualification support.
 
@@ -6708,6 +7025,17 @@ def build_hybrid_prompt(
 
     qualification_section = ""
     if bant_enabled:
+        # What the visitor's CURRENT message already answers. The extractor's
+        # value lands a turn late (it runs on the worker after the reply), so
+        # without this the state showed "Not yet identified" for the very
+        # dimension the visitor had just given, and the block asked it again.
+        # A stored value always wins; only an open dimension is filled in, and
+        # only in this turn's copy of the state (nothing is persisted here).
+        # The pipeline does the merge itself and passes ``stated_now``, so the
+        # dimension it persists as asked is picked from the same state.
+        if stated_now is None:
+            bs, stated_now = _state_with_current_turn(bs, question, config)
+
         # Build score-aware qualification state for the prompt's status block.
         state_lines = []
         for dim in conversation_order:
@@ -6717,7 +7045,10 @@ def build_hybrid_prompt(
             score = int(bs.get(f"{dim}_score", 0) or 0)
             value = bs.get(dim) or "Not yet identified"
             label = dim_cfg.get("label") or dim.replace("_", " ").title()
-            state_lines.append(f"- {label}: {value} (score: {score}/{max_score})")
+            if dim in stated_now:
+                state_lines.append(f"- {label}: {value} (stated in the visitor's latest message; not yet scored)")
+            else:
+                state_lines.append(f"- {label}: {value} (score: {score}/{max_score})")
 
         state_text = "\n".join(state_lines)
 
@@ -6733,13 +7064,26 @@ def build_hybrid_prompt(
         if not probe_ok:
             next_dim_to_probe = None
 
+        # Session-level holds: an incident or a recap is not a sales moment.
+        # Nothing qualifying is asked and no CTA chips are offered either.
+        probe_hold_reason = ""
+        if urgent_session:
+            probe_hold_reason = (
+                "the visitor reported an urgent incident earlier in this conversation and the team has been alerted"
+            )
+        elif recap_turn:
+            probe_hold_reason = "the visitor asked for a summary or recap of this conversation"
+        if probe_hold_reason:
+            next_dim_to_probe = None
+
         # Build CTA instruction if any dimension has CTA enabled
         cta_dims = []
-        for dim in missing_dims:
-            dim_config = config.get(dim, {})
-            if dim_config.get("cta_enabled", False):
-                options = [o["label"] for o in dim_config.get("options", [])]
-                cta_dims.append(f"  - {dim}: options = {options}")
+        if not probe_hold_reason:
+            for dim in missing_dims:
+                dim_config = config.get(dim, {})
+                if dim_config.get("cta_enabled", False):
+                    options = [o["label"] for o in dim_config.get("options", [])]
+                    cta_dims.append(f"  - {dim}: options = {options}")
 
         cta_instruction = ""
         if cta_dims:
@@ -6879,6 +7223,13 @@ Eligible dimensions (use the exact dimension key, lowercase):
                 "this. Keep it to one or two short sentences and end on a warm "
                 "note, never a question mark."
             )
+        elif probe_hold_reason:
+            probing_instruction = (
+                f"Do NOT ask a qualifying question this turn: {probe_hold_reason}. "
+                "This is not a sales moment. Answer what they asked, from the "
+                "REFERENCE INFORMATION and the CONVERSATION HISTORY, and end on a "
+                "statement, with no next-step pitch."
+            )
         elif not next_dim_to_probe:
             probing_instruction = (
                 "Do NOT ask a qualifying question this turn: what you need is "
@@ -6889,6 +7240,7 @@ Eligible dimensions (use the exact dimension key, lowercase):
             )
         elif has_prior_turns:
             probing_instruction = f"""The conversation is underway. Answer the visitor's question FIRST, then close with ONE natural follow-up about their **{next_dim_to_probe.upper()}**.
+- FIRST CHECK: if their latest message or the CONVERSATION HISTORY already gives their {next_dim_to_probe.upper()}, do not ask it. Acknowledge it in one clause and ask nothing this turn.
 - THE REFLECTION IS OPTIONAL AND USUALLY WRONG. You may open with one short sentence that reflects something concrete the visitor just said (a fact, number, tool, goal or pain), for example "Two months is a comfortable runway for this." If their latest message is a greeting, a bare question, their name, or their contact details, there is NOTHING to reflect: skip it and open with the answer. Never invent feelings, and never open with a manufactured line ("Doing well, Eva.", "Thanks for sharing that.").
 - NEVER reflect something YOU said. "You mentioned" and "you said" describe the visitor's own words only.
 - If their latest message answered or updated what you were tracking, acknowledge it (they said "2 months", then "one week": "Even sooner, a week works well.") and never re-ask it.
@@ -6942,8 +7294,8 @@ Answering the visitor's question comes first. Qualification is secondary, but su
 {probing_instruction}
 
 UNIVERSAL RULES:
+- Never ask about something the visitor already told you, in this message or earlier in the conversation. This outranks the dimension named above: when their latest message answers it, acknowledge it and ask nothing.
 - At most ONE qualifying question per reply, after the answer, never before it, and never framed as a survey or checklist.
-- Never ask about something the visitor already told you.
 - The closure rule above always wins: after a closure message, ask nothing.
 - ROLE ACKNOWLEDGMENT: only when the visitor states their own job title or says they make the buying decision, acknowledge exactly what they said in one short clause before the answer, once per conversation, in your own words. Never say they approve or sign off unless they said so, and never read a role into a company type, a task or a form. Do not invent team roles, programmes or processes to go with it.
 - Order to ask in: {", ".join(d.upper() for d in conversation_order)}
@@ -8063,12 +8415,12 @@ async def _detect_price_intent_bounded(question: str) -> PriceIntentDecision:
 
     The caller runs ``price_intent.might_ask_price`` first, so a message without a
     price word costs no thread and no model call. This runs
-    ``price_intent.decide_price_intent`` (which falls back to its rules on a model
-    error) on a worker thread under ``_PRICE_INTENT_TIMEOUT_S``. A stall uses the
-    fallback rules; the worker thread cannot be interrupted, so its late answer is
-    discarded.
+    ``price_intent.decide_price_intent`` (which retries one failed model call
+    inside the same deadline, then falls back to its rules) on a worker thread
+    under ``_PRICE_INTENT_TIMEOUT_S``. A stall uses the fallback rules; the worker
+    thread cannot be interrupted, so its late answer is discarded.
     """
-    task = asyncio.create_task(asyncio.to_thread(decide_price_intent, question))
+    task = asyncio.create_task(asyncio.to_thread(decide_price_intent, question, budget_s=_PRICE_INTENT_TIMEOUT_S))
     try:
         return await asyncio.wait_for(task, timeout=_PRICE_INTENT_TIMEOUT_S)
     except TimeoutError:
@@ -8092,13 +8444,28 @@ async def _turn_price_intent(
     rule also reads as pricing, so raw words that pass the classifier alone ("what
     plans do you have") still let a rewrite that names the price decide. The two
     are decided separately rather than concatenated, as the gate always read them.
+
+    A rewrite that is the raw words plus the company name
+    (``_expand_company_query``) is not decided again: it hides nothing. And when
+    the rewrite is decided, the fallback rules never override a decision the
+    model made on the raw words; a fallback only refines a fallback. Production,
+    2026-09-28 (case z-g05 on CleanStart): the model said NO on "roughly how much
+    does a soc 2 audit cost a company, from the auditor side?", the call on the
+    rewrite (those words plus "CleanStart") returned nothing, and the fallback
+    rules read the rewrite as a price question, so the visitor got the escalation
+    instead of the auditor-fee answer.
     """
     decision = await raw_task if raw_task is not None else NOT_A_PRICE_QUESTION
     raw_escalates = decision.asks_price and _pricing_gate.is_pricing_question(question)
-    if raw_escalates or rewritten == question or not might_ask_price(rewritten):
+    if raw_escalates or rewrite_adds_no_price_word(question, rewritten) or not might_ask_price(rewritten):
         return decision, question
     rewritten_decision = await _detect_price_intent_bounded(rewritten)
-    return (rewritten_decision, rewritten) if rewritten_decision.asks_price else (decision, question)
+    if not rewritten_decision.asks_price:
+        return decision, question
+    model_decided_raw = raw_task is not None and not decision.by_fallback
+    if rewritten_decision.by_fallback and model_decided_raw:
+        return decision, question
+    return rewritten_decision, rewritten
 
 
 # The second search on a deferred pricing turn (``_widen_mixed_turn_context``)
@@ -9205,12 +9572,15 @@ async def rag_pipeline_stream(
             # from history. Committing here makes the documented "always
             # persisted" contract true and only risks losing the
             # not-yet-generated bot reply (audit F10).
+            # A pasted secret (an AWS key in a CI log, evaluation 2026-09-28) is
+            # scrubbed from the stored copy: the transcript is read by operators
+            # and later turns, and none of them needs the key itself.
             add_chat_message(
                 session,
                 session_id,
                 client_id=cid,
                 role="user",
-                content=question,
+                content=redact_secrets(question),
                 location=location,
                 device=device,
                 bot_id=bid,
@@ -9396,6 +9766,7 @@ async def rag_pipeline_stream(
                     contact_url=_contact_url,
                     repeat=_urgent_repeat,
                     ask_for_contact=not _urgent_contact_known,
+                    message=question,
                 )
                 _safety_net_metric(
                     "urgent_incident",
@@ -9659,7 +10030,10 @@ async def rag_pipeline_stream(
             # Rules only, and pure: a message that does not read as chasing a
             # reply costs nothing and loads no session. Only after the form was
             # offered in this conversation, on a bot whose live chat can still take
-            # the visitor, and in English, like the handoff reply itself.
+            # the visitor, and in English, like the handoff reply itself. The
+            # reply says sorry for the wait before the form line: on the
+            # 2026-09-28 evaluation the bare repeat line left the wait
+            # unacknowledged on both production bots (x-human-nobody-replying).
             if live_chat_on and not _judges_bypassed and visitor_reaction.is_waiting_for_a_person(question):
                 _wait_filters = [ChatSession.id == session_id]
                 if bid:
@@ -9672,7 +10046,7 @@ async def rag_pipeline_stream(
                     _wait_text = (
                         _care_note
                         + _name_ack_prefix(_flow_name, _just_named, language)
-                        + handoff_reply(team_available=bool(_team_online), repeat=True)
+                        + handoff_waiting_reply(team_available=bool(_team_online))
                     )
                     # Fixed text, saved before the first frame like the urgent reply.
                     _bot_msg = add_chat_message(
@@ -10642,20 +11016,57 @@ async def rag_pipeline_stream(
             # Which file to offer is still decided by ``pick_documents``, never by
             # the model.
             #
+            # A question about the company's own credentials is not a file
+            # request, whatever the classifier hears in "share your SOC 2 type 2
+            # report": like a pricing question it falls through, to the model
+            # and its CREDENTIAL FACTS block, unless the catalog holds the exact
+            # file. Review 2026-09-30: with "report" a document noun, CleanStart
+            # answered that question "I don't have a downloadable document for
+            # that here" and Eventus offered IBM's breach report as its own.
+            #
             # The catalog fetched here is reused by the media catalog and the card
             # checks further down, so a turn reads it from the database once.
             _bot_catalog: list[dict] | None = None
             _pick = None
             _doc_intent_tags: dict[str, str] = {}
+            # The text the credential check reads, decided once for the document
+            # route here and the check itself below ("Credential facts, alongside
+            # the relevance gate"): the visitor's words, or for a follow-up its
+            # rewrite, as the pricing gate reads it. None when the turn asks
+            # about no credential. A non-English turn is left to the knowledge
+            # base like the other English-tuned judges.
+            _credential_question_text: str | None = None
+            if _credential_question:
+                _credential_question_text = question
+            elif (
+                not _judges_bypassed
+                and _gate_search_query != question
+                and _credential_facts.asks_about_credentials(_gate_search_query, _company_name)
+            ):
+                _credential_question_text = _gate_search_query
             if _doc_intent_task is not None:
                 if bid is not None:
                     _bot_catalog = _owned_bot_catalog(session, bid, _owned_media)
                 _pick = pick_documents(question, _company_name, _bot_catalog or [])
-                # "is there a pdf of this i can share with my boss" names no topic of
-                # its own: it means the file the last reply carried, or the topic of
-                # the visitor's previous message.
-                if _prior_turns and refers_back(question) and not (_pick.docs and _pick.exact):
-                    _pick = _referred_documents(history, _company_name, _bot_catalog or [], _owned_media) or _pick
+                _topic_named = names_a_topic(question, _company_name)
+                # "send me the datasheet" names no topic of its own. The search
+                # rewrite carries the one the conversation gave it ("Acme red
+                # teaming datasheet"), and its exact pick beats a guess from the
+                # bare kind.
+                if not _topic_named and _gate_question != question and names_a_topic(_gate_question, _company_name):
+                    _rewrite_pick = pick_documents(_gate_question, _company_name, _bot_catalog or [])
+                    if _rewrite_pick.docs and (_rewrite_pick.exact or not _pick.docs):
+                        _pick = _rewrite_pick
+                # "is there a pdf of this i can share with my boss" points back: it
+                # means the file the last reply carried, or the topic of the nearest
+                # earlier visitor message that names one. A request naming no topic
+                # is read the same way, unless it names another kind of document
+                # than that file: "pls share a brochure" is not the case study the
+                # last reply carried.
+                if _prior_turns and (refers_back(question) or not _topic_named) and not (_pick.docs and _pick.exact):
+                    _pick = (
+                        _referred_documents(question, history, _company_name, _bot_catalog or [], _owned_media) or _pick
+                    )
                 # A pricing question belongs to the pricing gate, whichever way the
                 # gate went. "can you send me your pricing pdf?" on a bot with a
                 # pricing page is answered from that page (the gate narrowed the
@@ -10674,6 +11085,18 @@ async def rag_pipeline_stream(
                         bot_id=bid,
                     )
                     # The classifier's answer is not needed: stop waiting on it.
+                    _doc_intent_task.cancel()
+                    _pick = None
+                elif _credential_question_text is not None and not (_pick.docs and _pick.exact):
+                    _safety_net_metric(
+                        "document_request_fell_through",
+                        path="stream",
+                        reason="credentials",
+                        found=str(len(_pick.docs)),
+                        exact=str(_pick.exact),
+                        session=session_id,
+                        bot_id=bid,
+                    )
                     _doc_intent_task.cancel()
                     _pick = None
                 else:
@@ -10827,6 +11250,10 @@ async def rag_pipeline_stream(
                     _doc_text = f"{_doc_text} {_doc_meeting_pivot.text}"
                 # The reply is fixed text, so it is saved BEFORE the first frame:
                 # a visitor who closes the tab mid-stream still leaves it behind.
+                # The cards are saved with it, as the generated path saves its
+                # own, so the next "is there a pdf of this?" finds the file
+                # (evaluation 2026-09-28, y-d8-pdf-asked-twice: the message was
+                # saved without them and the third turn denied the file).
                 _bot_msg = add_chat_message(
                     session,
                     session_id,
@@ -10834,6 +11261,8 @@ async def rag_pipeline_stream(
                     role="bot",
                     content=_doc_text,
                     bot_id=bid,
+                    media_card=_pick.docs[0] if _pick.docs else None,
+                    media_secondary=_pick.docs[1:] if len(_pick.docs) > 1 else None,
                     is_unanswered=not _pick.docs,
                     source_language=_lang_base(language),
                 )
@@ -10890,10 +11319,18 @@ async def rag_pipeline_stream(
                     session=session_id,
                     bot_id=bid,
                 )
+                # A repeat that asks for something new ("i need the escalation
+                # matrix now" after the support reply) names it, so the visitor
+                # hears the request was noted and not the same form line again
+                # (evaluation 2026-09-28, x-support-escalation, both bots).
                 _handoff_text = (
                     _care_note
                     + _name_ack_prefix(_flow_name, _just_named, language, returning=_returning_by_name)
-                    + handoff_reply(team_available=bool(_team_online), repeat=_handoff_repeat)
+                    + handoff_reply(
+                        team_available=bool(_team_online),
+                        repeat=_handoff_repeat,
+                        request=requested_thing(question) if _handoff_repeat else None,
+                    )
                 )
                 yield _stream_metadata(session_id, [], language)
                 yield _handoff_text
@@ -10937,18 +11374,8 @@ async def rag_pipeline_stream(
             # written from, so the model is told which credentials the company
             # holds and which it only offers (``credential_facts``). The check
             # starts here, once the chunks are final, and runs while the relevance
-            # gate judges them; generation awaits it. A follow-up is read on its
-            # rewrite, as the pricing gate reads it. A non-English turn is left to
-            # the knowledge base like the other English-tuned judges.
-            _credential_question_text: str | None = None
-            if _credential_question:
-                _credential_question_text = question
-            elif (
-                not _judges_bypassed
-                and _gate_search_query != question
-                and _credential_facts.asks_about_credentials(_gate_search_query, _company_name)
-            ):
-                _credential_question_text = _gate_search_query
+            # gate judges them; generation awaits it. Which text it reads was
+            # decided above the document route (``_credential_question_text``).
             if _credential_question_text is not None and final_results:
                 _credential_task = asyncio.create_task(
                     _credential_facts.check_credentials_bounded(
@@ -11628,9 +12055,24 @@ async def rag_pipeline_stream(
             # so the bot doesn't ask one more question in the turn the quote fires.
             _quote_hold = _quote_probe_hold(bot, current_bant, _answers_last_probe)
             _probe_ok = _should_probe_this_turn(question, history) and not _quote_hold
+            # Session-level holds on the qualifying question: the team has been
+            # alerted to an incident in this conversation, or this turn asks for
+            # a recap of it. See ``build_hybrid_prompt``.
+            _urgent_session = urgent_followup.is_urgent_session(chat_session)
+            _recap_turn = _is_recap_turn(question)
+            # ONE state for the turn: the stored state plus what this message
+            # itself states. The prompt is built from it and ``_next_probe`` is
+            # picked from it, so the dimension the prompt asks about is the one
+            # persisted as ``last_probed_dimension`` and appended after a media
+            # card. A held turn asks nothing, so it records nothing as asked.
+            _turn_bant, _stated_now = (
+                _state_with_current_turn(current_bant, question, bant_config)
+                if is_bant_enabled and bant_config
+                else (current_bant, {})
+            )
             _next_probe = (
-                select_next_probe_dimension(current_bant, bant_config, recently_probed=_recently_probed)[0]
-                if is_bant_enabled and bant_config and _probe_ok
+                select_next_probe_dimension(_turn_bant, bant_config, recently_probed=_recently_probed)[0]
+                if is_bant_enabled and bant_config and _probe_ok and not (_urgent_session or _recap_turn)
                 else None
             )
 
@@ -11673,7 +12115,8 @@ async def rag_pipeline_stream(
                 question,
                 context_text,
                 history_context,
-                bant_state=current_bant,
+                bant_state=_turn_bant,
+                stated_now=_stated_now,
                 bant_enabled=is_bant_enabled,
                 bant_config=bant_config,
                 live_chat_enabled=live_chat_on,
@@ -11709,6 +12152,8 @@ async def rag_pipeline_stream(
                 visitor_country=visitor_country,
                 language=language,
                 credential_block=_credential_block,
+                urgent_session=_urgent_session,
+                recap_turn=_recap_turn,
             )
             logger.info(f"Hybrid RAG stream prompt built | Context chunks: {len(final_results)}")
 
@@ -12413,6 +12858,8 @@ async def rag_pipeline_stream(
             # The media template makes the model drop the
             # probe after a card, so append it ourselves (streamed live AND folded
             # into full_answer so the transcript matches what the visitor saw).
+            # ``_next_probe`` is None on an urgent session and on a recap turn,
+            # so neither gets a question appended here.
             if (
                 _media_card
                 and is_bant_enabled
@@ -12500,6 +12947,10 @@ async def rag_pipeline_stream(
                         # Let through by the field-question classifier after the
                         # judge rejected it; a cache hit would skip both.
                         or _relax_field_question
+                        # Written for this conversation: an answer after an
+                        # incident, or a recap of what was said in it.
+                        or _urgent_session
+                        or _recap_turn
                         # Only the turn that actually produced a card is skipped, and
                         # only when the model chose that card: nothing on a cache hit
                         # can know which asset the model would have picked. A card the

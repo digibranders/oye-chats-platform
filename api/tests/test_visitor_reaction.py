@@ -361,31 +361,128 @@ class TestTheReply:
         )
 
 
-class TestARepeatDoesNotApologiseAgain:
+class TestARepeatAcknowledgesTheNewMessage:
     """Eval 2026-09-17: "thats not what i asked" got "Sorry about that. ...", and
-    "forget it, useless" after it got the scope refusal. A reply right after a
-    reply to an upset visitor keeps the offer and drops the second apology."""
+    "forget it, useless" after it got the scope refusal. Eval 2026-09-28
+    (y-d6-frustrated-next-step, both bots): "this is such a waste of my time
+    yaar" after the first offer got "Understood. The form is just below.", which
+    acknowledged nothing. A reply right after a reply to an upset visitor now
+    opens on its own short apology, offers a retry in one line, and keeps the
+    channel the plan has."""
 
     _PREVIOUS = "Thanks, Eva. Sorry about that. I haven't been able to help with that here, but our team can."
+
+    def test_the_production_case_gets_an_apology_a_retry_and_the_form(self):
+        first = vr.dissatisfied_offer(
+            support_enabled=True,
+            live_chat_enabled=True,
+            team_available=False,
+            handoff_already_offered=False,
+            company_name="Acme",
+            contact_url=None,
+        )
+        again = vr.dissatisfied_offer(
+            support_enabled=True,
+            live_chat_enabled=True,
+            team_available=False,
+            handoff_already_offered=True,
+            company_name="Acme",
+            contact_url=None,
+            previous_reply=first.text,
+        )
+        assert first.text == (
+            "Sorry about that. I haven't been able to help with that here, but our team can. "
+            "Share your details in the form below and I'll pass them to our team."
+        )
+        assert again.text == (
+            "Sorry, I know this is taking your time. Tell me in one line what you need and I'll try again, "
+            "or share your details in the form below and I'll pass them to our team."
+        )
+        assert again.suggest_handoff is True and again.needs_message_card is False
+        assert intent_service.bot_offers_handoff(again.text)
+
+    def test_with_the_team_reachable_the_retry_still_offers_the_connection(self):
+        again = vr.dissatisfied_offer(
+            support_enabled=True,
+            live_chat_enabled=True,
+            team_available=True,
+            handoff_already_offered=True,
+            company_name="Acme",
+            contact_url=None,
+            previous_reply=self._PREVIOUS,
+        )
+        assert again.text == (
+            "Sorry, I know this is taking your time. Tell me in one line what you need and I'll try again, "
+            "or share your details in the form below and I'll connect you with our team."
+        )
+        assert intent_service.bot_offers_handoff(again.text)
+
+    @pytest.mark.parametrize("already", [True, False])
+    def test_live_chat_off_points_at_the_message_form(self, already):
+        again = vr.dissatisfied_offer(
+            support_enabled=True,
+            live_chat_enabled=False,
+            team_available=False,
+            handoff_already_offered=already,
+            company_name="Acme",
+            contact_url=None,
+            previous_reply=self._PREVIOUS,
+        )
+        assert again.text == (
+            "Sorry, I know this is taking your time. Tell me in one line what you need and I'll try again, "
+            "or leave your details in the message form so our team can get back to you."
+        )
+        assert again.suggest_handoff is False and again.needs_message_card is True
 
     @pytest.mark.parametrize("support", [True, False])
     @pytest.mark.parametrize("live", [True, False])
     @pytest.mark.parametrize("already", [True, False])
-    def test_the_offer_stays_and_the_apology_goes(self, support, live, already):
+    def test_the_repeat_keeps_the_flags_and_uses_new_words(self, support, live, already):
         kwargs = {
             "support_enabled": support,
             "live_chat_enabled": live,
             "team_available": True,
             "handoff_already_offered": already,
             "company_name": "Acme",
-            "contact_url": None,
+            "contact_url": "https://acme.example/contact",
         }
         first = vr.dissatisfied_offer(**kwargs)
         again = vr.dissatisfied_offer(**kwargs, previous_reply=self._PREVIOUS)
-        assert again.text.startswith("Understood. ")
-        assert "sorry" not in again.text.lower()
-        assert again.text.removeprefix("Understood. ") == first.text.removeprefix("Sorry about that. ")
+        assert again.text.startswith(vr.DISSATISFIED_REPEAT_ACK + " ")
+        assert not again.text.startswith(vr.DISSATISFIED_ACK)
+        assert again.text != first.text
+        assert "try again" in again.text or "do my best" in again.text, "a retry is offered"
         assert (again.suggest_handoff, again.needs_message_card) == (first.suggest_handoff, first.needs_message_card)
+        assert "\u2014" not in again.text and "\u2013" not in again.text
+
+    def test_no_human_support_keeps_the_contact_page(self):
+        again = vr.dissatisfied_offer(
+            support_enabled=False,
+            live_chat_enabled=False,
+            team_available=False,
+            handoff_already_offered=False,
+            company_name="Acme",
+            contact_url="https://acme.example/contact",
+            previous_reply=self._PREVIOUS,
+        )
+        assert again.text == (
+            "Sorry, I know this is taking your time. Tell me in one line what you need and I'll try again, "
+            "or reach the **Acme** team here: https://acme.example/contact"
+        )
+
+    def test_a_third_upset_turn_is_still_read_as_a_repeat(self):
+        """The new opening must count as a reaction reply, or the third turn apologises the old way."""
+        kwargs = {
+            "support_enabled": True,
+            "live_chat_enabled": True,
+            "team_available": True,
+            "handoff_already_offered": True,
+            "company_name": "Acme",
+            "contact_url": None,
+        }
+        second = vr.dissatisfied_offer(**kwargs, previous_reply=self._PREVIOUS)
+        third = vr.dissatisfied_offer(**kwargs, previous_reply="Thanks, Eva. " + second.text)
+        assert third.text == second.text
 
     @pytest.mark.parametrize("previous", [None, "", "Acme builds widgets for factories."])
     def test_an_ordinary_previous_reply_keeps_the_apology(self, previous):
@@ -400,7 +497,7 @@ class TestARepeatDoesNotApologiseAgain:
         )
         assert offer.text.startswith("Sorry about that. ")
 
-    def test_after_the_router_frustration_reply_it_does_not_apologise_again(self):
+    def test_after_the_router_frustration_reply_it_does_not_apologise_the_same_way(self):
         from app.services.intent_router import route_intent
 
         previous = route_intent("stupid bot", "Acme").answer
@@ -413,7 +510,7 @@ class TestARepeatDoesNotApologiseAgain:
             contact_url=None,
             previous_reply=previous,
         )
-        assert offer.text.startswith("Understood. ")
+        assert offer.text.startswith(vr.DISSATISFIED_REPEAT_ACK + " ")
 
 
 def test_the_router_and_this_module_read_the_same_annoyed_faces():

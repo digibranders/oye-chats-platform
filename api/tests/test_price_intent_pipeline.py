@@ -19,6 +19,7 @@ import pytest
 from app.db.models import ChatSession
 from app.services import price_intent, urgent_route
 from app.services import rag_service as rs
+from app.services.price_intent import NOT_A_PRICE_QUESTION, PriceClassifierUnavailableError, PriceIntentDecision
 from app.services.pricing_gate import pricing_pivot
 from tests.test_rag_pipeline_defects import (
     _anonymous_visitor,
@@ -39,6 +40,11 @@ REPORTER = (
 )
 SHARE_PRICE = "is eventus listed? whats the share price, should i invest"
 PRICING_MODEL = "do u charge per endpoint, per user or per image? whats the pricing model"
+#: Production, 2026-09-28, case z-g05 on CleanStart: the model said NO on these
+#: words, the classifier call on the rewrite (these words plus the company name)
+#: returned an empty output, and the fallback rules escalated.
+AUDIT_FEE = "roughly how much does a soc 2 audit cost a company, from the auditor side?"
+AUDIT_FEE_ANSWER = ("Auditor fees for a SOC 2 report typically run from $15,000 to $50,000.",)
 #: Capitalised words the old subject recovery lifted into the reply.
 KB = (_doc("Story: Data Per-User licensing for India. Our Office is hiring AI engineers. NO lock-in."),)
 GENERIC = (
@@ -54,15 +60,19 @@ class _Classifier:
         self.answers: dict[str, str] = {}
         self.default = "PRICE"
         self.error: Exception | None = None
+        #: The phrasings the model produces no answer for.
+        self.errors: dict[str, Exception] = {}
         self.delay_s = 0.0
         self.calls: list[str] = []
 
-    def __call__(self, question: str) -> str:
+    def __call__(self, question: str, timeout_s: float | None = None) -> str:
         self.calls.append(question)
         if self.delay_s:
             time.sleep(self.delay_s)
         if self.error is not None:
             raise self.error
+        if question in self.errors:
+            raise self.errors[question]
         return price_intent._LABELS[self.answers.get(question, self.default)]
 
 
@@ -310,6 +320,169 @@ class TestAPriceQuestionThatAsksMore:
         assert "2,66,250" not in _answer_text(frames)
 
 
+def _rewritten_to(monkeypatch, rewritten):
+    """Retrieval hands the gate ``rewritten`` as the turn's search query."""
+
+    async def fake_resolve(session_id, question, history, bid, cid, company_name, embedding_profile=None):
+        return rewritten, None
+
+    monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", fake_resolve)
+
+
+@pytest.mark.asyncio
+async def test_the_auditor_fee_question_is_answered_when_the_rewrite_call_fails(db, monkeypatch, classifier, metrics):
+    """Production, 2026-09-28: the model said NO on the visitor's words, the call on
+    the rewrite (the words plus the company name) returned nothing, and the
+    fallback rules escalated. The rewrite adds no price word, so it is not
+    decided again, and the answer the same case gave twice that day is given."""
+    rewritten = f"{AUDIT_FEE} Acme"
+    classifier.answers[AUDIT_FEE] = "NO"
+    classifier.errors[rewritten] = PriceClassifierUnavailableError("empty output")
+    bot, captured = _team_priced_bot(db, monkeypatch, "intent-audit-fee", chunks=AUDIT_FEE_ANSWER)
+    _rewritten_to(monkeypatch, rewritten)
+
+    frames = await _drive_stream(bot, AUDIT_FEE, "intent-audit-fee")
+
+    assert classifier.calls == [AUDIT_FEE]
+    assert _answer_text(frames) == "".join(AUDIT_FEE_ANSWER)
+    assert len(captured["prompts"]) == 1
+    assert _named(metrics, "pricing_gate_escalation") == []
+    assert "pricing_escalated" not in _cards(db, "intent-audit-fee")
+
+
+@pytest.mark.asyncio
+async def test_a_fallback_on_a_true_rewrite_never_overrides_the_models_no(db, monkeypatch, classifier, metrics):
+    """The rewrite rephrases the question, so it is decided again; the model
+    produces nothing for it twice, and the fallback rules read a price question.
+    The model's NO on the visitor's own words stands."""
+    rewritten = "what does a SOC 2 audit cost from the auditor side"
+    classifier.answers[AUDIT_FEE] = "NO"
+    classifier.errors[rewritten] = PriceClassifierUnavailableError("empty output")
+    bot, captured = _team_priced_bot(db, monkeypatch, "intent-audit-fee-rewrite", chunks=AUDIT_FEE_ANSWER)
+    _rewritten_to(monkeypatch, rewritten)
+
+    frames = await _drive_stream(bot, AUDIT_FEE, "intent-audit-fee-rewrite")
+
+    assert classifier.calls == [AUDIT_FEE, rewritten, rewritten]
+    assert _answer_text(frames) == "".join(AUDIT_FEE_ANSWER)
+    assert len(captured["prompts"]) == 1
+    assert _named(metrics, "pricing_gate_escalation") == []
+
+
+@pytest.mark.asyncio
+async def test_a_rewrite_the_model_reads_as_pricing_still_escalates(db, monkeypatch, classifier):
+    """The re-decision keeps its purpose: the model says NO on the visitor's vague
+    words and PRICE on the rewrite that spells out what they ask."""
+    question, rewritten = "what about the cost side of it?", "what is the price of SOC as a Service"
+    classifier.answers[question] = "NO"
+    classifier.answers[rewritten] = "PRICE"
+    bot, _ = _team_priced_bot(db, monkeypatch, "intent-vague-follow-up", chunks=("unused",))
+    _rewritten_to(monkeypatch, rewritten)
+
+    frames = await _drive_stream(bot, question, "intent-vague-follow-up")
+
+    assert classifier.calls == [question, rewritten]
+    assert _answer_text(frames) == GENERIC
+
+
+class TestTheTurnDecision:
+    """``_turn_price_intent`` on its own: which phrasing is decided, and which decision wins."""
+
+    MODEL_NO = PriceIntentDecision("no", by_fallback=False)
+    RULES_NO = PriceIntentDecision("no", by_fallback=True)
+    MODEL_PRICE = PriceIntentDecision("price", by_fallback=False)
+    RULES_PRICE = PriceIntentDecision("price", by_fallback=True)
+    REWRITTEN = "what does a SOC 2 audit cost from the auditor side"
+
+    @pytest.fixture()
+    def second(self, monkeypatch):
+        """The bounded decision on the rewrite: records the phrasings it is asked about."""
+        state = {"decision": self.MODEL_NO, "calls": []}
+
+        async def fake(question):
+            state["calls"].append(question)
+            return state["decision"]
+
+        monkeypatch.setattr(rs, "_detect_price_intent_bounded", fake)
+        return state
+
+    @staticmethod
+    async def _raw(decision):
+        async def done():
+            return decision
+
+        return asyncio.create_task(done())
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "rewritten", [AUDIT_FEE, f"{AUDIT_FEE} Acme", f"  {AUDIT_FEE.upper()}  acme "], ids=["same", "name", "case"]
+    )
+    async def test_a_rewrite_that_only_adds_the_company_name_is_not_decided_again(self, second, rewritten):
+        second["decision"] = self.RULES_PRICE
+
+        result = await rs._turn_price_intent(AUDIT_FEE, rewritten, await self._raw(self.MODEL_NO))
+
+        assert result == (self.MODEL_NO, AUDIT_FEE)
+        assert second["calls"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_fallback_on_the_rewrite_never_overrides_the_model(self, second):
+        second["decision"] = self.RULES_PRICE
+
+        result = await rs._turn_price_intent(AUDIT_FEE, self.REWRITTEN, await self._raw(self.MODEL_NO))
+
+        assert result == (self.MODEL_NO, AUDIT_FEE)
+        assert second["calls"] == [self.REWRITTEN]
+
+    @pytest.mark.asyncio
+    async def test_a_fallback_on_the_rewrite_refines_a_fallback(self, second):
+        second["decision"] = self.RULES_PRICE
+
+        result = await rs._turn_price_intent(AUDIT_FEE, self.REWRITTEN, await self._raw(self.RULES_NO))
+
+        assert result == (self.RULES_PRICE, self.REWRITTEN)
+
+    @pytest.mark.asyncio
+    async def test_a_fallback_on_the_rewrite_decides_when_the_raw_words_were_never_decided(self, second):
+        """ "and that one?" carries no price word: the rewrite is the only decision."""
+        second["decision"] = self.RULES_PRICE
+
+        result = await rs._turn_price_intent("and that one?", self.REWRITTEN, None)
+
+        assert result == (self.RULES_PRICE, self.REWRITTEN)
+        assert second["calls"] == [self.REWRITTEN]
+
+    @pytest.mark.asyncio
+    async def test_the_model_on_the_rewrite_overrides_the_model_on_the_raw_words(self, second):
+        second["decision"] = self.MODEL_PRICE
+
+        result = await rs._turn_price_intent(AUDIT_FEE, self.REWRITTEN, await self._raw(self.MODEL_NO))
+
+        assert result == (self.MODEL_PRICE, self.REWRITTEN)
+
+    @pytest.mark.asyncio
+    async def test_a_no_on_the_rewrite_keeps_the_raw_decision(self, second):
+        second["decision"] = self.MODEL_NO
+
+        result = await rs._turn_price_intent(AUDIT_FEE, self.REWRITTEN, await self._raw(self.MODEL_NO))
+
+        assert result == (self.MODEL_NO, AUDIT_FEE)
+
+    @pytest.mark.asyncio
+    async def test_raw_words_the_gate_escalates_are_not_decided_again(self, second):
+        result = await rs._turn_price_intent(PRICING_MODEL, self.REWRITTEN, await self._raw(self.MODEL_PRICE))
+
+        assert result == (self.MODEL_PRICE, PRICING_MODEL)
+        assert second["calls"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_turn_with_no_price_word_anywhere_costs_nothing(self, second):
+        result = await rs._turn_price_intent("and that one?", "where is the Acme office", None)
+
+        assert result == (NOT_A_PRICE_QUESTION, "and that one?")
+        assert second["calls"] == []
+
+
 @pytest.mark.asyncio
 async def test_a_follow_up_is_decided_on_its_rewrite(db, monkeypatch, classifier):
     """ "and that one?" carries no price word; its rewrite does, and escalates."""
@@ -349,8 +522,26 @@ async def test_the_bounded_check_takes_the_classifier_answer_in_time(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_the_bounded_check_hands_the_retry_its_deadline(monkeypatch):
+    """The retry inside ``decide_price_intent`` must fit the same ceiling the
+    stream awaits, so the budget it is given is that ceiling."""
+    monkeypatch.setattr(rs, "_PRICE_INTENT_TIMEOUT_S", 2.5)
+    seen: list[dict] = []
+
+    def fake_decide(question, **kwargs):
+        seen.append(kwargs)
+        return price_intent.NOT_A_PRICE_QUESTION
+
+    monkeypatch.setattr(rs, "decide_price_intent", fake_decide)
+
+    await rs._detect_price_intent_bounded(REPORTER)
+
+    assert seen == [{"budget_s": 2.5}]
+
+
+@pytest.mark.asyncio
 async def test_the_bounded_check_survives_a_broken_decision(monkeypatch):
-    def _broken(_question):
+    def _broken(_question, **_kwargs):
         raise RuntimeError("worker thread failed")
 
     monkeypatch.setattr(rs, "decide_price_intent", _broken)

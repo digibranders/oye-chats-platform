@@ -18,6 +18,7 @@ from app.services import urgent_route
 from app.services.intent_service import bot_offers_handoff
 from app.services.urgent_route import (
     _fallback_is_urgent,
+    carries_distress,
     emergency_url_from_answer_links,
     is_urgent_incident,
     might_be_urgent_incident,
@@ -1124,3 +1125,159 @@ def test_the_prompt_states_the_past_versus_ongoing_rule_with_examples(model):
     # The rule sits outside the fence, above the data.
     assert prompt.index("PAST VERSUS ONGOING") < prompt.index("<<<VISITOR MESSAGE>>>")
     assert prompt.endswith("Respond with ONLY the word YES or NO.")
+
+
+# ── A turn-specific first line ────────────────────────────────────────────────
+
+#: Evaluation 2026-09-28 (w-secret-pasted-log, both bots): a pasted CI log with
+#: AWS keys got only the priority line, with no first step.
+SECRET_LOG = (
+    "our github actions log was public for 2 days and it had this:\n"
+    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n"
+    "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+    "can u check if someone used it? what do we do now"
+)
+#: Evaluation 2026-09-28 (y-d6-distress-incident, both bots): an incident with
+#: distress wording got the plain priority line.
+DISTRESS_INCIDENT = (
+    "we got hit by ransomware last night and my boss is blaming me. havent slept, feeling really low honestly"
+)
+CREDENTIAL_LINE = (
+    "I can't check whether they've been used, so revoke or rotate those credentials right now and review the "
+    "account's recent activity. Please don't paste secrets into this chat."
+)
+DISTRESS_LINE = "That sounds like a lot to carry, and you don't have to handle it alone."
+
+
+class TestTheFirstLineFitsTheMessage:
+    def test_a_pasted_credential_gets_the_rotate_line_first(self):
+        r = _reply(team_available=False, ask_for_contact=True, message=SECRET_LOG)
+        assert r.text == (
+            f"{CREDENTIAL_LINE} This sounds urgent, so I've flagged it to **Acme** as a priority. What's the best "
+            "phone number or email to reach you on right now? Type it here, or share your details in the form "
+            "below so the team can contact you as soon as possible."
+        )
+        assert "AKIA" not in r.text
+        assert r.suggest_handoff is True and r.needs_message_card is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "our admin password: changed by attacker",
+            "question about tokens: pricing per 1000 tokens?",
+            "forgot my password: cannot login",
+        ],
+    )
+    def test_a_message_that_only_talks_about_a_password_gets_no_rotate_line(self, message):
+        """Review 2026-09-30: no secret was pasted, so there is nothing to revoke."""
+        r = _reply(team_available=False, message=message)
+        assert CREDENTIAL_LINE not in r.text
+        assert r.text.startswith("This sounds urgent")
+
+    def test_distress_gets_one_empathy_clause_first(self):
+        r = _reply(team_available=False, message=DISTRESS_INCIDENT)
+        assert r.text == (
+            f"{DISTRESS_LINE} This sounds urgent, so I've flagged it to **Acme** as a priority. Share your "
+            "details in the form below so the team can contact you as soon as possible."
+        )
+        assert r.suggest_handoff is True
+
+    def test_a_message_with_neither_is_worded_as_before(self):
+        plain = "we are under a ransomware attack right now, please help!"
+        assert _reply(message=plain) == _reply()
+        assert _reply(message=plain, repeat=True) == _reply(repeat=True)
+        assert _reply(message=None) == _reply()
+
+    @pytest.mark.parametrize("repeat", [False, True])
+    @pytest.mark.parametrize("support_enabled", [True, False])
+    @pytest.mark.parametrize("live_chat_enabled", [True, False])
+    def test_the_lines_come_first_on_every_plan_and_on_a_repeat(self, repeat, support_enabled, live_chat_enabled):
+        plain = _reply(
+            repeat=repeat,
+            support_enabled=support_enabled,
+            live_chat_enabled=live_chat_enabled,
+            contact_url="https://acme.com/c",
+        )
+        with_key = _reply(
+            repeat=repeat,
+            support_enabled=support_enabled,
+            live_chat_enabled=live_chat_enabled,
+            contact_url="https://acme.com/c",
+            message=SECRET_LOG,
+        )
+        assert with_key.text == f"{CREDENTIAL_LINE} {plain.text}"
+        assert (with_key.suggest_handoff, with_key.needs_message_card) == (
+            plain.suggest_handoff,
+            plain.needs_message_card,
+        )
+        assert bot_offers_handoff(with_key.text) is bot_offers_handoff(plain.text)
+
+    def test_distress_comes_before_the_credential_line(self):
+        r = _reply(message=f"{DISTRESS_INCIDENT} also the attacker had this: password=hunter2hunter2")
+        assert r.text.startswith(f"{DISTRESS_LINE} {CREDENTIAL_LINE} This sounds urgent")
+
+    @pytest.mark.parametrize("message", [SECRET_LOG, DISTRESS_INCIDENT])
+    def test_no_dashes(self, message):
+        text = _reply(message=message).text
+        assert "\u2014" not in text and "\u2013" not in text
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        DISTRESS_INCIDENT,
+        "haven't slept in two days, feeling so low",
+        "my boss is blaming me for the breach",
+        "i'm panicking, our whole network is encrypted",
+        "we got hacked and i think i will lose my job over this",
+        "honestly feeling hopeless, the server is gone",
+        "cant sleep, someone is inside our systems",
+        "i'm scared, they are threatening to leak our data",
+        "im freaking out, all our files are encrypted",
+        "i've been fired over this breach",
+        "i might get fired for this, the client data is gone",
+        "we are all panicking here, the site is down",
+        "my boss is freaking out about the leak",
+        "i am so stressed out, the attacker is still inside",
+        "I'm literally shaking, they emailed our customers",
+        "honestly i am completely overwhelmed by this incident",
+    ],
+)
+def test_distress_wording_is_read(message):
+    assert carries_distress(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "we are under a ransomware attack right now, please help!",
+        "someone is using our stripe account",
+        "our site got defaced this morning and its still up",
+        "the low priority queue is stuck",
+        "we run a sleep clinic and our booking system was hacked",
+        "our boss wants a report on the breach",
+        # Review 2026-09-30: a machine that panicked and alerts that fired are
+        # the incident, not a person who is not coping.
+        "kernel panicked on the db host right after the intrusion",
+        "alerts have been fired all night, someone is in our network",
+        "the rule got fired twice and the firewall is down",
+        "our servers are overwhelmed by a ddos right now",
+        "the api keeps breaking down since the attack",
+        "the process is crying out for memory after the breach",
+        "the dashboard is shaking and flickering after the hack",
+        "",
+        None,
+        42,
+    ],
+)
+def test_plain_incident_wording_is_not_distress(message):
+    assert carries_distress(message) is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["feeling " * 5000 + "x", "i am " * 8000, "we are all just so " * 2000, "my boss is " * 3500, "i" + " " * 40000],
+    ids=["feeling", "i-am", "we-are-all", "my-boss-is", "i-then-spaces"],
+)
+def test_distress_check_is_linear_on_long_input(message):
+    assert timeit.timeit(lambda: carries_distress(message), number=1) < 0.5

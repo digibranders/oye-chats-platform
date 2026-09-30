@@ -35,9 +35,89 @@ _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 # dates, an acceptable trade for a best-effort redaction pass.
 _PHONE_RE = re.compile(r"(?<!\d)(\+\d[\d\-.\s()]{5,}\d|\(\d{2,4}\)[\d\-.\s]{5,}\d)(?!\d)")
 
+# Secret-shaped tokens a visitor pastes from a log or a config. On the
+# 2026-09-28 evaluation (w-secret-pasted-log) a CI log with AWS keys in it was
+# stored in the transcript and quoted to the team. Well-known key prefixes are
+# matched whole by ``_KNOWN_SECRET_RE``; a "name = value" shape
+# (``_NAMED_SECRET_RE``) keeps the name and loses the value. Every piece is
+# bounded, so a long paste is scanned in linear time: the private key body is a
+# run of non-dash characters, which cannot backtrack into the next header.
+_KNOWN_SECRET_RE = re.compile(
+    r"(?:"
+    r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"  # AWS access key id
+    r"|\bAIza[0-9A-Za-z_-]{35}\b"  # Google API key
+    r"|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}\b"  # GitHub tokens
+    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}\b"  # Slack tokens
+    r"|\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}\b"  # Stripe keys
+    r"|\bsk-[A-Za-z0-9_-]{20,}\b"  # OpenAI-style keys
+    r"|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"  # a JWT
+    r"|-----BEGIN [A-Z ]{0,30}PRIVATE KEY-----[^-]{0,4000}(?:-----END [A-Z ]{0,30}PRIVATE KEY-----)?"
+    r")"
+)
+# "password: hunter2hunter2", "AWS_SECRET_ACCESS_KEY=wJalr...", "pwd=S3cr3t!pass".
+# The keyword stands alone in the name: it may sit inside a longer identifier
+# ("DB_PASSWORD", "client_secret_2"), but a letter straight after it makes a
+# different word ("tokens", "passwordless", "secretary"). Review 2026-09-30:
+# "question about tokens: pricing per 1000 tokens?" was stored as "tokens:
+# [REDACTED_SECRET] per 1000 tokens?". The value is only a candidate here;
+# ``_looks_like_a_secret`` decides.
+_NAMED_SECRET_RE = re.compile(
+    r"(?i:\b[A-Z0-9_.-]{0,40}(?:secret|token|password|passwd|pwd|api[_-]?key|access[_-]?key|private[_-]?key"
+    r"|auth[_-]?key|client[_-]?secret)(?![A-Z])[A-Z0-9_.-]{0,40}\s{0,5}[:=]\s{0,5}[\"']?)"
+    r"(?P<value>[^\s\"',;]{8,})"
+)
+_MIN_SECRET_VALUE_CHARS = 8
+_REDACTED_SECRET = "[REDACTED_SECRET]"
+
+
+def _looks_like_a_secret(value: str) -> bool:
+    """Whether the value after "password:" is a pasted secret and not a word.
+
+    Eight or more characters with no space (the pattern's own rule), and a digit
+    or a capital inside a word with small letters. "password: cannot login",
+    "password: Required" and "password: ********" are sentences about a
+    password; "hunter2hunter2" and "correctHorseBattery" are one.
+    """
+    if len(value) < _MIN_SECRET_VALUE_CHARS:
+        return False
+    if any(char.isdigit() for char in value):
+        return True
+    return any(char.islower() for char in value) and any(char.isupper() for char in value[1:])
+
+
+def _redact_named_secret(match: re.Match[str]) -> str:
+    """The name of a "name = value" secret stays and its value goes; a value that is a plain word stays too."""
+    if not _looks_like_a_secret(match.group("value")):
+        return match.group(0)
+    return match.group(0)[: match.start("value") - match.start(0)] + _REDACTED_SECRET
+
+
+def redact_secrets(text: str | None) -> str | None:
+    """Scrub secret-shaped tokens (cloud keys, API tokens, "password = ..." values, private keys).
+
+    Used on the visitor's message before it is stored and before the urgent and
+    support alerts quote it, and by :func:`redact_pii` for traces. Never raises,
+    for the reason :func:`redact_pii` gives.
+    """
+    if not text:
+        return text
+    try:
+        return _NAMED_SECRET_RE.sub(_redact_named_secret, _KNOWN_SECRET_RE.sub(_REDACTED_SECRET, text))
+    except Exception:  # noqa: BLE001 - redaction must never break a turn
+        return text
+
+
+def contains_secret(text: object) -> bool:
+    """Whether the text carries a secret-shaped token :func:`redact_secrets` would scrub."""
+    if not isinstance(text, str) or not text:
+        return False
+    if _KNOWN_SECRET_RE.search(text) is not None:
+        return True
+    return any(_looks_like_a_secret(match.group("value")) for match in _NAMED_SECRET_RE.finditer(text))
+
 
 def redact_pii(text: str | None) -> str | None:
-    """Best-effort scrub of emails/phone numbers before text reaches Langfuse.
+    """Best-effort scrub of emails, phone numbers and secrets before text reaches Langfuse.
 
     Exported rather than module-private because :func:`langfuse_generation` is
     not the only way spans get built: the ``rag-pipeline`` /
@@ -55,7 +135,7 @@ def redact_pii(text: str | None) -> str | None:
     try:
         redacted = _EMAIL_RE.sub("[REDACTED_EMAIL]", text)
         redacted = _PHONE_RE.sub("[REDACTED_PHONE]", redacted)
-        return redacted
+        return redact_secrets(redacted)
     except Exception:  # noqa: BLE001 - redaction must never break tracing
         return text
 

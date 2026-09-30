@@ -278,3 +278,28 @@ def test_urgent_wins_when_both_variants_are_asked_for():
     subject, _, _ = _render("cs@acme.test", "Acme Bot", MESSAGE, CONTACT, urgent=True, support=True, session_id="x")
 
     assert subject == "URGENT: Eva reported an active incident on Acme Bot"
+
+
+def test_the_email_never_quotes_a_pasted_secret(db, outbox):
+    """Review 2026-09-30: the stored message and the urgent alert were scrubbed,
+    while this alert still quoted the visitor's raw words to the team."""
+    client, bot = _bot_with_session(db, "support-secret", notification_emails={"handoff_request": ["cs@acme.test"]})
+    message = "im a customer and cant log in, my api key sk_live_abcdefghij1234567 stopped working"
+
+    support_route.alert_team_of_support_request(db, bot, client.id, "support-secret", message)
+
+    (email,) = outbox["emails"]
+    assert "sk_live_abcdefghij1234567" not in email["reason"]
+    assert email["reason"] == "im a customer and cant log in, my api key [REDACTED_SECRET] stopped working"
+
+
+def test_a_secret_cut_by_the_length_limit_is_still_scrubbed(db, outbox):
+    client, bot = _bot_with_session(db, "support-secret-cut", notification_emails={"handoff_request": ["cs@acme.test"]})
+    padding = "x" * (support_route._SUPPORT_EMAIL_MESSAGE_LIMIT - 12)
+    message = f"{padding} AKIAIOSFODNN7EXAMPLE is our key"
+
+    support_route.alert_team_of_support_request(db, bot, client.id, "support-secret-cut", message)
+
+    (email,) = outbox["emails"]
+    assert "AKIA" not in email["reason"]
+    assert len(email["reason"]) <= support_route._SUPPORT_EMAIL_MESSAGE_LIMIT

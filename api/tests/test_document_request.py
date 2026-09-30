@@ -24,8 +24,10 @@ from app.services.document_request import (
     decide_document_intent,
     document_reply,
     fallback_document_intent,
+    is_another_kind,
     is_document_request,
     mentions_document,
+    names_a_topic,
     pick_documents,
     refers_back,
 )
@@ -884,6 +886,199 @@ def test_a_generic_request_with_no_profile_gets_the_no_file_reply():
     pick = pick_documents("send me your brochure", "Acme", catalog)
     assert pick.docs == []
     assert "don't have a downloadable document" in document_reply(pick, company_name="Acme", support_enabled=True)
+
+
+BREACH_REPORT = "https://acme.com/files/cost-of-a-data-breach-2025-full-report.pdf"
+BREACH_REPORT_REQUEST = "do you have any report on data breach costs i can download"
+#: Evaluation 2026-09-28 (y-d4-brochure-and-call, both bots): "brochure" matched
+#: nothing on catalogs that hold only datasheets, so the reply denied any document.
+BROCHURE_AND_CALL = "pls share a brochure and also set up a call with ur team thursday afternoon"
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        BREACH_REPORT_REQUEST,
+        "send me the annual report",
+        "any reports on cloud security?",
+        "can i download it",
+        "where do i download your app",
+    ],
+)
+def test_a_report_or_a_download_is_a_document_mention(msg):
+    """Evaluation 2026-09-28 (y-e14-breach-report): "report" was not a document
+    noun, so the route never ran and the model picked an off-topic card."""
+    assert mentions_document(msg) is True
+
+
+def test_the_breach_report_request_gets_the_report_exactly():
+    pick = pick_documents(BREACH_REPORT_REQUEST, "Eventus Security", _catalog(BREACH_REPORT, SOC))
+    assert [d["url"] for d in pick.docs] == [BREACH_REPORT]
+    assert pick.exact is True
+
+
+def test_a_report_request_is_not_answered_with_a_datasheet():
+    pick = pick_documents("send me your security report", "Acme", _catalog(SOC))
+    assert pick.docs == []
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        # Review 2026-09-30: both are credential questions that production
+        # answers from the knowledge base. The kind word alone matched IBM's
+        # breach report, which Eventus then offered as its SOC 2 report.
+        "can u share your SOC 2 type 2 report",
+        "our vendor risk team is asking for ur soc 2 type ii report",
+        "send me the annual report",
+        "send me your security report",
+        "any reports i can download?",
+        "send me your report",
+    ],
+)
+def test_a_report_sharing_only_the_word_report_is_never_offered(msg):
+    pick = pick_documents(msg, "Eventus Security", _catalog(BREACH_REPORT, SOC))
+    assert pick.docs == []
+    assert pick.exact is False
+
+
+def test_a_report_named_by_its_topic_is_still_exact():
+    url = "https://acme.com/files/SOC-2-Type-2-Report.pdf"
+    pick = pick_documents("can u share your SOC 2 type 2 report", "Acme", _catalog(url, BREACH_REPORT))
+    assert [d["url"] for d in pick.docs] == [url]
+    assert pick.exact is True
+
+
+def test_a_generic_brochure_request_falls_back_to_a_datasheet():
+    pick = pick_documents(BROCHURE_AND_CALL, "Acme", _catalog(SOC))
+    assert [d["url"] for d in pick.docs] == [SOC]
+    assert pick.exact is False
+    assert document_reply(pick, company_name="Acme", support_enabled=True, booking=True) == (
+        "I don't have that exact document, but **SOC as a Service Datasheet** is available to download below. "
+        "You can also pick a time with the team below."
+    )
+
+
+def test_the_datasheet_fallback_takes_only_overview_kinds():
+    catalog = _catalog(
+        "https://acme.com/files/Globex-Case-Study.pdf",
+        "https://acme.com/files/Cloud-Threats-Whitepaper.pdf",
+        "https://acme.com/files/Red-Teaming-Datasheet.pdf",
+        SOC,
+    )
+    pick = pick_documents("can you send me your brochure?", "Acme", catalog)
+    assert {d["url"] for d in pick.docs} == {"https://acme.com/files/Red-Teaming-Datasheet.pdf", SOC}
+    assert pick.exact is False
+
+
+def test_the_spec_sheet_is_offered_when_no_datasheet_exists():
+    catalog = _catalog("https://acme.com/files/Globex-Case-Study.pdf", "https://acme.com/files/SOAR-Spec-Sheet.pdf")
+    pick = pick_documents("can you send me your brochure?", "Acme", catalog)
+    assert [d["url"] for d in pick.docs] == ["https://acme.com/files/SOAR-Spec-Sheet.pdf"]
+    assert pick.exact is False
+
+
+@pytest.mark.parametrize("msg", ["can you send me your brochure?", BROCHURE_AND_CALL, "send me a pdf"])
+def test_a_generic_request_with_only_other_kinds_still_gets_no_file(msg):
+    """A case study or a report is plainly not the overview asked for."""
+    catalog = _catalog("https://acme.com/files/Globex-Case-Study.pdf", BREACH_REPORT)
+    assert pick_documents(msg, "Acme", catalog).docs == []
+
+
+@pytest.mark.parametrize(
+    "msg",
+    [
+        "send me a pdf of this",
+        "is there a pdf of this?? need to fwd to my boss",
+        "send me the pdf",
+        "can i download it",
+        "any file i can share with my team",
+    ],
+)
+def test_a_request_naming_no_brochure_never_gets_the_datasheet_fallback(msg):
+    """Review 2026-09-30: "send me a pdf of this" names no overview, and was
+    offered whichever datasheets the catalog held."""
+    pick = pick_documents(msg, "Acme", _catalog(SOC, "https://acme.com/files/Red-Teaming-Datasheet.pdf"))
+    assert pick.docs == []
+
+
+@pytest.mark.parametrize(
+    "msg", ["send me your company overview pdf", "do you have a company profile", "share a product overview document"]
+)
+def test_a_profile_or_overview_request_gets_the_datasheet_fallback(msg):
+    pick = pick_documents(msg, "Acme", _catalog(SOC))
+    assert [d["url"] for d in pick.docs] == [SOC]
+    assert pick.exact is False
+
+
+@pytest.mark.parametrize("msg", ["send me a pdf", "send me your company overview pdf"])
+def test_a_request_naming_no_kind_still_gets_the_company_profile(msg):
+    pick = pick_documents(msg, "Acme", _catalog(SOC, PROFILE))
+    assert [d["url"] for d in pick.docs] == [PROFILE]
+
+
+CASE_STUDY_CARD = {
+    "type": "download",
+    "url": "https://acme.com/files/aurascape-case-study.pdf",
+    "name": "aurascape-case-study.pdf",
+}
+
+
+@pytest.mark.parametrize(
+    ("msg", "expected"),
+    [
+        ("pls share a brochure", True),
+        ("send me the datasheet", True),
+        ("can you send your company profile", True),
+        ("is there a pdf of this", False),
+        ("send it again", False),
+        ("can i get that case study", False),
+        ("share the case study and a brochure", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_a_card_of_another_kind_than_the_one_named(msg, expected):
+    assert is_another_kind(msg, CASE_STUDY_CARD) is expected
+
+
+@pytest.mark.parametrize("card", [None, {}, {"type": "download", "url": RED, "name": "Red-Teaming.pdf"}, "x"])
+def test_a_card_that_says_no_kind_is_never_another_kind(card):
+    assert is_another_kind("pls share a brochure", card) is False
+
+
+def test_the_company_profile_still_beats_the_datasheet_fallback():
+    pick = pick_documents("can you send me your brochure?", "Acme", _catalog(SOC, PROFILE))
+    assert [d["url"] for d in pick.docs] == [PROFILE]
+
+
+def test_an_exact_datasheet_request_is_still_exact():
+    pick = pick_documents("send me the SOC as a Service datasheet", "Acme", _catalog(SOC, RED))
+    assert [d["url"] for d in pick.docs] == [SOC]
+    assert pick.exact is True
+
+
+@pytest.mark.parametrize(
+    ("msg", "expected"),
+    [
+        ("is there a pdf of this", False),
+        ("send me the datasheet", False),
+        ("can u share the report pls", False),
+        ("ok", False),
+        ("thanks, send me your brochure please", False),
+        ("", False),
+        (None, False),
+        ("the SOC datasheet", True),
+        ("do you have a case study on banks", True),
+        ("what is red teaming", True),
+    ],
+)
+def test_names_a_topic(msg, expected):
+    assert names_a_topic(msg, "Acme") is expected
+
+
+def test_the_company_name_is_never_a_topic():
+    assert names_a_topic("send me the Acme brochure", "Acme") is False
 
 
 def test_a_generic_brochure_request_prefers_the_company_profile():

@@ -73,11 +73,16 @@ _ANY_NOUN = rf"(?:{_FILE_NOUNS}|pdfs?|catalog(?:ue)?s?|decks?)"
 #: What ``mentions_document`` listens for: the nouns above, a bare deck (a patio deck is
 #: the classifier's to rule out), and the other documents a business hands out: a
 #: lookbook, a prospectus, a floor plan, a menu, a guide, a manual, a syllabus, a
-#: timetable, and a firm, business or corporate profile. Not a rate card or a price
-#: list: those are pricing questions, and the pricing gate answers them.
+#: timetable, a report, and a firm, business or corporate profile, and "download"
+#: itself ("any report i can download"). Not a rate card or a price list: those
+#: are pricing questions, and the pricing gate answers them. Evaluation
+#: 2026-09-28 (y-e14-breach-report): "do you have any report on data breach
+#: costs i can download" named no noun here, so the route never ran and the
+#: model attached an off-topic card.
 _MENTION_RE = re.compile(
     rf"\b(?:{_FILE_NOUNS}|pdfs?|catalog(?:ue)?s?|decks?|lookbooks?|prospectus(?:es)?|floor\s*plans?|menus?"
-    r"|guides?|manuals?|syllab(?:us(?:es)?|i)|time\s?tables?|(?:firm|business|corporate)\s+profiles?)\b",
+    r"|guides?|manuals?|syllab(?:us(?:es)?|i)|time\s?tables?|reports?|downloads?"
+    r"|(?:firm|business|corporate)\s+profiles?)\b",
     re.IGNORECASE,
 )
 
@@ -712,7 +717,7 @@ _KINDS: tuple[tuple[str, re.Pattern[str] | None, re.Pattern[str]], ...] = tuple(
         ("ebook", r"\be-?books?\b", r"(?<!fac)e[\W_]*book"),
         # A "Risk Profile Assessment" is not the company's profile.
         ("company profile", r"company\s+profile", r"company[\W_]*profile"),
-        ("report", None, r"report"),
+        ("report", r"\breports?\b", r"report"),
     )
 )
 #: Asks for the company as a whole, answered by a profile-like file when the
@@ -720,6 +725,26 @@ _KINDS: tuple[tuple[str, re.Pattern[str] | None, re.Pattern[str]], ...] = tuple(
 _GENERIC_KINDS = frozenset({"brochure", "company profile"})
 #: File names that describe the whole company.
 _PROFILE_RE = re.compile(r"brochure|company[-_ ]?profile|overview|capabilit|corporate", re.IGNORECASE)
+#: Kinds that describe an offering, offered as the nearest thing to a brochure
+#: when the catalog has no profile-like file. Evaluation 2026-09-28
+#: (y-d4-brochure-and-call, both bots): "pls share a brochure" on catalogs of
+#: datasheets got "I don't have a downloadable document". A case study, a
+#: report or a whitepaper is plainly something else and is never offered for it.
+_OVERVIEW_KINDS = frozenset({"datasheet", "spec sheet", "one-pager"})
+#: A request that names the overview it wants. Only these get the fallback
+#: above: "send me a pdf of this" names none, and was offered whichever
+#: datasheets the catalog held (review, 2026-09-30).
+_OVERVIEW_REQUEST_RE = re.compile(r"\b(?:brochures?|profiles?|overviews?)\b", re.IGNORECASE)
+#: "overview" asks for the company as a whole, so it is not a topic a file must share.
+_OVERVIEW_WORDS = frozenset({"overview", "overviews"})
+#: The one kind word that is also a topic word ("report" in ``Annual-Report.pdf``
+#: is part of what the file is about). It counts toward a match beside a shared
+#: topic word and never on its own, and a report is never offered for its kind
+#: alone: a catalog's reports are often third-party. Review 2026-09-30: "can u
+#: share your SOC 2 type 2 report" shared only "report" with IBM's
+#: ``cost-of-a-data-breach-2025-full-report.pdf``, which was offered for it.
+_KIND_TOPIC_WORDS = frozenset({"report", "reports"})
+_TOPIC_ONLY_KINDS = frozenset({"report"})
 #: Words that say how a document is asked for, never which one. Includes
 #: greetings, politeness and filler that name no document either: "thanks!
 #: could you email me the brochure" and "hey guys send me your brochure" must
@@ -1245,9 +1270,13 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
     equally good files, one of the kind asked for comes first. When no file shares
     a word, or the question names only a kind ("any case studies?"), the files of
     that kind are offered, exact only when there was no topic to miss (see
-    ``_no_topic_to_miss``). A request for a brochure or a
+    ``_no_topic_to_miss``). A report is the exception: it is offered only when it
+    shares a topic word besides "report" itself, never for its kind alone (see
+    ``_KIND_TOPIC_WORDS``). A request for a brochure or a
     company profile, or one naming neither a kind nor a topic, falls back to
-    profile-like files, marked inexact. Anything else gets no files: never an
+    profile-like files, marked inexact. A request that names a brochure, a
+    profile or an overview falls back further, to the catalog's datasheets,
+    spec sheets and one-pagers. Anything else gets no files: never an
     unrelated one, like a third-party report the knowledge base happens to link.
 
     Identifiers come before words. A file that carries a different identifier of
@@ -1278,7 +1307,7 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
     if asked_about.words:
         shared_by_file = [(_shared_words(asked_about, f), f) for f in files]
         scored = sorted(
-            ((shared, f) for shared, f in shared_by_file if shared),
+            ((shared, f) for shared, f in shared_by_file if shared - _KIND_TOPIC_WORDS),
             key=lambda sf: (
                 _identifier_rank(asked_about, sf[1]),
                 -len(sf[0] & asked_about.clause_words),
@@ -1311,7 +1340,7 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
             ]
             return _offer(best, others, exact=exact, limit=limit)
 
-    of_kind = sorted((f for f in files if asked & f.kinds), key=rank)
+    of_kind = sorted((f for f in files if (asked - _TOPIC_ONLY_KINDS) & f.kinds), key=rank)
     if of_kind:
         first = of_kind[0]
         exact = _no_topic_to_miss(asked_about, first)
@@ -1322,11 +1351,48 @@ def pick_documents(question: str, company_name: str | None, catalog: object, lim
         ]
         return _offer(first, others, exact=exact, limit=limit)
 
-    generic = asked <= _GENERIC_KINDS and (bool(asked) or not asked_about.words)
+    generic = asked <= _GENERIC_KINDS and (bool(asked) or not asked_about.words - _OVERVIEW_WORDS)
     profiles = sorted((f for f in files if f.profile_like), key=rank) if generic else []
     if profiles:
         return _offer(profiles[0], profiles[1:], exact=False, limit=limit)
+    wants_overview = generic and _OVERVIEW_REQUEST_RE.search(text) is not None
+    overviews = sorted((f for f in files if f.kinds & _OVERVIEW_KINDS), key=rank) if wants_overview else []
+    if overviews:
+        return _offer(overviews[0], overviews[1:], exact=False, limit=limit)
     return DocumentPick(docs=[], exact=False)
+
+
+def is_another_kind(question: object, card: object) -> bool:
+    """True when the message names a kind of document and the card's file is plainly another kind.
+
+    "pls share a brochure" names a brochure, so the case study the last reply
+    carried is not what it asks for. "is there a pdf of this" names no kind, and
+    ``Red-Teaming.pdf`` says none, so neither is ever another kind. The file is
+    read by its name as the catalog reads it. Pure and linear.
+    """
+    if not isinstance(question, str) or not isinstance(card, dict):
+        return False
+    raw = card.get("name")
+    url = card.get("url")
+    name = raw if isinstance(raw, str) and raw.strip() else (url if isinstance(url, str) else "")
+    readable = unquote(name.split("?", 1)[0].rsplit("/", 1)[-1])
+    carried = frozenset(kind for kind, _, pattern in _KINDS if pattern.search(readable))
+    asked = _asked_kinds(_without_contacts(question))
+    return bool(asked and carried and not asked & carried)
+
+
+def names_a_topic(question: object, company_name: str | None) -> bool:
+    """Whether the message carries a topic word of its own, read as ``pick_documents`` reads it.
+
+    "is there a pdf of this" and "send me the datasheet" name none: their topic
+    is in the conversation, so the route reads the search rewrite and the
+    earlier visitor turns for it. Contact details, a self-introduction, the
+    channel, the company's own words and the document words themselves
+    ("report" among them) do not count. Pure and linear.
+    """
+    text = _without_contacts(question if isinstance(question, str) else "")
+    company = _terms(company_name)
+    return bool(_question(text, company, []).words - _KIND_TOPIC_WORDS)
 
 
 #: A hash or id in a file name, "68d65d47051e1b0ca7a66228" or "29330f6b": noise to a reader.

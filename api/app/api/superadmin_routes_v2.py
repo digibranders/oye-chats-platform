@@ -1642,6 +1642,12 @@ _SAFETY_NET_METRIC_NAMES = [
     # the escalation after the rest; also counted above with
     # reason=price_guard_redacted.
     "price_guard_redacted",
+    # The price classifier's one retry after a failed or empty call
+    # (price_intent.py): it answered, it failed too, or the first attempt left
+    # it no time.
+    "price_intent_retry_recovered",
+    "price_intent_retry_failed",
+    "price_intent_retry_skipped",
     # A service commitment ("we remediate within 48 hours") the reference does
     # not state as the company's own, replaced after the stream
     # (commitment_guard.py via rag_service.py).

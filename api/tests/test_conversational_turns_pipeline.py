@@ -25,7 +25,7 @@ import pytest
 from app.db.models import ChatSession
 from app.services import rag_service as rs
 from app.services import visitor_reaction as vr
-from app.services.handoff_reply import handoff_reply, unhelped_offer
+from app.services.handoff_reply import handoff_reply, handoff_waiting_reply, unhelped_offer
 from app.services.intent_router import route_intent as real_route_intent
 from app.services.relevance_gate import ConversationContext
 from tests.test_rag_pipeline_defects import (
@@ -262,7 +262,10 @@ class TestWaitingOnTheTeamGetsTheForm:
         frames = await _drive_stream(bot, message, session_id)
 
         meta = _final_meta(frames)
-        assert _answer_text(frames) == handoff_reply(team_available=True, repeat=True)
+        # Evaluation 2026-09-28 (x-human-nobody-replying, both bots): the wait is
+        # acknowledged before the form is pointed at again.
+        assert _answer_text(frames) == handoff_waiting_reply(team_available=True)
+        assert _answer_text(frames).startswith("Sorry for the wait, nobody has picked this up yet.")
         assert meta["suggest_handoff"] is True
         assert meta["qualification_pending"] is False
         assert cap["prompts"] == [] and judge.calls == []
@@ -290,7 +293,7 @@ class TestWaitingOnTheTeamGetsTheForm:
 
         frames = await _drive_stream(bot, "anyone there?", "wait-away")
 
-        assert _answer_text(frames) == handoff_reply(team_available=False, repeat=True)
+        assert _answer_text(frames) == handoff_waiting_reply(team_available=False)
 
     @pytest.mark.asyncio
     async def test_without_a_form_offered_the_message_is_not_intercepted(self, db, monkeypatch):
@@ -437,9 +440,37 @@ class TestRepeatedReactionsAndDistress:
 
         frames = await _drive_stream(bot, "useless answer", "re-3")
 
-        offer = unhelped_offer(live_chat_enabled=True, team_available=True)
-        assert _answer_text(frames) == "Understood. " + offer.text
+        answer = _answer_text(frames)
+        assert answer.startswith(vr.DISSATISFIED_REPEAT_ACK + " "), answer
+        assert "Sorry about that." not in answer
+        assert answer.endswith("or share your details in the form below and I'll connect you with our team.")
         assert _final_meta(frames)["suggest_handoff"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_second_complaint_gets_an_apology_a_retry_and_the_form(self, db, monkeypatch):
+        """Evaluation 2026-09-28 (y-d6-frustrated-next-step, both bots): "this is
+        such a waste of my time yaar" after the first offer got "Understood. The
+        form is just below.", which acknowledged nothing."""
+        bot, cap, judge, _classifier = _bot(db, monkeypatch, "re-4", verdict=True, team_online=False)
+        await _answered_first(db, bot, "re-4", judge)
+
+        first = _answer_text(await _drive_stream(bot, "ur not answering anything useful", "re-4"))
+        frames = await _drive_stream(bot, "this is such a waste of my time yaar", "re-4")
+
+        assert first.endswith(
+            "Sorry about that. I haven't been able to help with that here, but our team can. "
+            "Share your details in the form below and I'll pass them to our team."
+        ), first
+        again = _answer_text(frames)
+        assert again.endswith(
+            "Sorry, I know this is taking your time. Tell me in one line what you need and I'll try again, "
+            "or share your details in the form below and I'll pass them to our team."
+        ), again
+        assert "Understood." not in again
+        assert _final_meta(frames)["suggest_handoff"] is True
+        assert len(cap["prompts"]) == 1, "neither reaction turn is a model call"
+        persisted = _messages(db, "re-4", role="bot")
+        assert persisted[-1].content == again
 
     @pytest.mark.asyncio
     async def test_distress_gets_care_before_moderation_and_no_sales_route(self, db, monkeypatch):

@@ -308,8 +308,15 @@ def classify_dissatisfaction(message: str, previous_reply: str) -> bool:
 #: The apology that opens a reply to a dissatisfied visitor.
 DISSATISFIED_ACK = "Sorry about that."
 #: The opening instead when the bot's previous reply already answered an upset
-#: visitor, so the conversation never becomes a loop of apologies.
-DISSATISFIED_REPEAT_ACK = "Understood."
+#: visitor: new words, not the same apology. Evaluation 2026-09-28
+#: (y-d6-frustrated-next-step, both bots): "this is such a waste of my time
+#: yaar" after the first offer got "Understood. The form is just below.", which
+#: acknowledged nothing. Listed in ``intent_router.REACTION_REPLY_LEADS`` so a
+#: third upset turn is still read as a repeat.
+DISSATISFIED_REPEAT_ACK = "Sorry, I know this is taking your time."
+#: The retry a repeat offers before the channel: a visitor who says the bot is
+#: wasting their time gets a concrete next step, not only the form again.
+_RETRY_OFFER = "Tell me in one line what you need and I'll try again, or"
 
 
 def dissatisfied_offer(
@@ -335,9 +342,13 @@ def dissatisfied_offer(
     ``previous_reply`` is the bot's reply the visitor is reacting to. When that
     reply was itself a reply to an upset visitor (see
     ``intent_router.follows_a_reaction_reply``), the opening is
-    ``DISSATISFIED_REPEAT_ACK`` and the apology is not repeated.
+    ``DISSATISFIED_REPEAT_ACK``, the first apology is not repeated, and the
+    reply offers a retry in one line before the channel: the same form or
+    message card as the first reply, or the contact page on a plan with no
+    person. The flags are the first reply's, so the widget shows nothing new.
     """
-    ack = DISSATISFIED_REPEAT_ACK if follows_a_reaction_reply(previous_reply) else DISSATISFIED_ACK
+    repeat = follows_a_reaction_reply(previous_reply)
+    ack = DISSATISFIED_REPEAT_ACK if repeat else DISSATISFIED_ACK
     if not support_enabled:
         about = f" about **{company_name}**" if company_name else ""
         usable_url = (
@@ -347,17 +358,31 @@ def dissatisfied_offer(
         )
         if usable_url:
             team = f"the **{company_name}** team" if company_name else "our team"
-            return HandoffOffer(
-                text=f"{ack} You can reach {team} here: {usable_url}",
-                suggest_handoff=False,
-                needs_message_card=False,
+            page = (
+                f"{_RETRY_OFFER} reach {team} here: {usable_url}"
+                if repeat
+                else f"You can reach {team} here: {usable_url}"
             )
+            return HandoffOffer(text=f"{ack} {page}", suggest_handoff=False, needs_message_card=False)
         return HandoffOffer(
             text=(
                 f"{ack} Try asking another way, or tell me the one thing you need{about}, and I'll do my best to help."
             ),
             suggest_handoff=False,
             needs_message_card=False,
+        )
+    if repeat:
+        if live_chat_enabled:
+            closing = "I'll connect you with our team." if team_available else "I'll pass them to our team."
+            return HandoffOffer(
+                text=f"{ack} {_RETRY_OFFER} share your details in the form below and {closing}",
+                suggest_handoff=True,
+                needs_message_card=False,
+            )
+        return HandoffOffer(
+            text=f"{ack} {_RETRY_OFFER} leave your details in the message form so our team can get back to you.",
+            suggest_handoff=False,
+            needs_message_card=True,
         )
     if live_chat_enabled and handoff_already_offered:
         return HandoffOffer(

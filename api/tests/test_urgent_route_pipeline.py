@@ -22,6 +22,7 @@ from tests.test_rag_pipeline_defects import (
     _messages,
     _stub_pipeline,
 )
+from tests.test_urgent_route import CREDENTIAL_LINE, DISTRESS_INCIDENT, DISTRESS_LINE, SECRET_LOG
 
 URGENT = "we are under a ransomware attack right now, please help!"
 PUSH_TASK = "task_dispatch_handoff_push"
@@ -682,3 +683,57 @@ async def test_follow_ups_after_the_urgent_reply_alert_no_one_again_and_get_no_u
     shown = _cards_shown(db, "urgent-follow-ups")
     assert shown.get("handoff_offered") is True
     assert shown.get("unhelped_streak") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_pasted_key_gets_the_rotate_line_and_never_lands_in_the_transcript_or_the_alert(
+    db, monkeypatch, alerts
+):
+    """Evaluation 2026-09-28 (w-secret-pasted-log, both bots)."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True, notification_emails=TEAM_EMAILS)
+    _make_session(db, bot, client, "urgent-secret")
+    db.add(LeadInfo(session_id="urgent-secret", bot_id=bot.id, name="Eva"))
+    db.commit()
+    cap = _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    monkeypatch.setattr(rs, "_live_team_reachable", lambda *_a, **_k: False)
+
+    frames = await _drive_stream(bot, SECRET_LOG, "urgent-secret")
+    answer = _answer_text(frames)
+
+    assert answer.startswith(CREDENTIAL_LINE + " This sounds urgent, so I've flagged it to **Acme** as a priority."), (
+        answer
+    )
+    assert _final_meta(frames)["suggest_handoff"] is True
+    assert cap["prompts"] == []
+    for secret in ("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"):
+        assert secret not in answer
+        for message in _messages(db, "urgent-secret"):
+            assert secret not in message.content, (message.role, message.content)
+        assert secret not in alerts["emails"][0]["reason"]
+    visitor_row = _messages(db, "urgent-secret", role="user")[0]
+    assert visitor_row.content.startswith("our github actions log was public for 2 days")
+    assert "AWS_ACCESS_KEY_ID=[REDACTED_SECRET]" in visitor_row.content
+    assert "AWS_ACCESS_KEY_ID=[REDACTED_SECRET]" in alerts["emails"][0]["reason"]
+    assert len(alerts["notify"]) == 1 and alerts["notify"][0]["urgent"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_incident_in_distress_gets_an_empathy_clause_before_the_priority_line(db, monkeypatch, alerts):
+    """Evaluation 2026-09-28 (y-d6-distress-incident, both bots)."""
+    client = _make_client(db)
+    bot = _make_bot(db, client, live_chat_enabled=True)
+    _make_session(db, bot, client, "urgent-distress")
+    db.add(LeadInfo(session_id="urgent-distress", bot_id=bot.id, name="Eva", email="eva@x.test"))
+    db.commit()
+    _stub_pipeline(monkeypatch, retrieved=(_doc("Acme runs incident response."),), support=True)
+    monkeypatch.setattr(rs, "_live_team_reachable", lambda *_a, **_k: False)
+
+    frames = await _drive_stream(bot, DISTRESS_INCIDENT, "urgent-distress")
+
+    assert _answer_text(frames) == (
+        f"{DISTRESS_LINE} This sounds urgent, so I've flagged it to **Acme** as a priority. Share your details "
+        "in the form below so the team can contact you as soon as possible."
+    )
+    assert _final_meta(frames)["suggest_handoff"] is True
+    assert len(alerts["notify"]) == 1

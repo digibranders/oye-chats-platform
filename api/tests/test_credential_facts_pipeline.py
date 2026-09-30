@@ -13,13 +13,14 @@ import time
 
 import pytest
 
-from app.services import credential_facts
+from app.services import credential_facts, document_request
 from app.services import rag_service as rs
 from tests.test_rag_pipeline_defects import (
     _answer_text,
     _Cache,
     _doc,
     _drive_stream,
+    _final_meta,
     _make_bot,
     _make_client,
     _make_session,
@@ -134,6 +135,41 @@ def _streaming(captured, answer: str):
         yield answer
 
     return fake_stream
+
+
+class _DocumentClassifier:
+    """Stands in for the gate model behind ``document_request.decide_document_intent``."""
+
+    def __init__(self) -> None:
+        self.answer = "send"
+        self.calls: list[str] = []
+
+    def __call__(self, question: str) -> str:
+        self.calls.append(question)
+        return self.answer
+
+
+@pytest.fixture(autouse=True)
+def document_classifier(monkeypatch):
+    """ "report" is a document noun, so "share your SOC 2 type 2 report" reaches
+    the document route. Its classifier says SEND here, the label that sends a
+    turn to the file reply, so every test in this file shows the credential
+    question winning over it (no test reaches a real model)."""
+    fake = _DocumentClassifier()
+    monkeypatch.setattr(document_request, "_classify_document_request_raw", fake)
+    return fake
+
+
+SOC_DATASHEET = "https://acme.example/files/SOC-as-a-Service-Datasheet.pdf"
+BREACH_REPORT = "https://acme.example/files/cost-of-a-data-breach-2025-full-report.pdf"
+VENDOR_RISK_WHITEPAPER = "https://acme.example/files/Vendor-Risk-Whitepaper.pdf"
+SOC_2_REPORT = "https://acme.example/files/SOC-2-Type-2-Report.pdf"
+NO_FILE_REPLY = "don't have a downloadable document"
+
+
+def _catalog(monkeypatch, *urls):
+    catalog = [{"files": [{"url": url, "name": url.rsplit("/", 1)[-1]} for url in urls]}]
+    monkeypatch.setattr(rs, "get_bot_media_urls", lambda *_a, **_k: catalog)
 
 
 @pytest.mark.asyncio
@@ -358,3 +394,101 @@ async def test_a_ranked_list_of_providers_never_confirms_our_own_certification(d
     assert "- ISO 27001: could not be confirmed from the reference information." in prompt
     assert "held by Acme" not in prompt
     assert _named(metrics, "credential_facts_checked")[0]["held"] == 0
+
+
+# ── A credential question that names a report is not a file request ──────────
+# Review 2026-09-30: "report" became a document noun on this branch, the
+# document route returns before the credential check, and the classifier reads
+# "share your SOC 2 type 2 report" as SEND. CleanStart stopped saying the report
+# is available under NDA and said "I don't have a downloadable document for that
+# here"; Eventus offered IBM's breach report as its own SOC 2 report.
+
+
+@pytest.mark.asyncio
+async def test_a_credential_question_the_classifier_reads_as_send_gets_the_credential_answer(
+    db, monkeypatch, model, metrics
+):
+    """CleanStart: a catalog with no SOC 2 report in it."""
+    model.reply = 'SOC 2 | HELD | DOC 1 | "SOC 2 Type II Report"'
+    reply = "Our SOC 2 Type II report is available on request under a signed NDA."
+    bot, captured = _bot(db, monkeypatch, "cred-doc-send", retrieved=(APPENDIX_PAGE,))
+    monkeypatch.setattr(rs, "generate_response_stream", _streaming(captured, reply))
+    _catalog(monkeypatch, SOC_DATASHEET)
+
+    frames = await _drive_stream(bot, "can u share your SOC 2 type 2 report", "cred-doc-send")
+
+    answer = _answer_text(frames)
+    assert NO_FILE_REPLY not in answer
+    assert "under a signed NDA" in answer
+    assert "CREDENTIAL FACTS" in _user_prompt(captured)
+    (tags,) = _named(metrics, "document_request_fell_through")
+    assert tags["reason"] == "credentials"
+    assert tags["found"] == "0"
+    assert _named(metrics, "document_request") == []
+    assert _named(metrics, "credential_facts_checked")
+
+
+@pytest.mark.asyncio
+async def test_a_credential_question_never_gets_a_third_party_report_as_the_download(db, monkeypatch, model, metrics):
+    """Eventus: the only "report" in the catalog is IBM's."""
+    bot, captured = _bot(db, monkeypatch, "cred-doc-ibm", retrieved=(PLAIN_PAGE,))
+    _catalog(monkeypatch, BREACH_REPORT, SOC_DATASHEET)
+
+    frames = await _drive_stream(bot, "our vendor risk team is asking for ur soc 2 type ii report", "cred-doc-ibm")
+
+    assert "media_card" not in _final_meta(frames)
+    assert "data breach" not in _answer_text(frames).casefold()
+    assert "- SOC 2: not stated anywhere in the reference information." in _user_prompt(captured)
+    assert _named(metrics, "document_request_fell_through")[0]["reason"] == "credentials"
+
+
+@pytest.mark.asyncio
+async def test_a_credential_question_with_only_an_inexact_file_is_answered_by_the_model(
+    db, monkeypatch, model, metrics
+):
+    bot, captured = _bot(db, monkeypatch, "cred-doc-inexact", retrieved=(PLAIN_PAGE,))
+    _catalog(monkeypatch, VENDOR_RISK_WHITEPAPER)
+    question = "our vendor risk team is asking for ur soc 2 type ii report"
+    pick = document_request.pick_documents(question, "Acme", rs.get_bot_media_urls())
+    assert [d["url"] for d in pick.docs] == [VENDOR_RISK_WHITEPAPER], "precondition: the route has a file to guess"
+    assert pick.exact is False
+
+    frames = await _drive_stream(bot, question, "cred-doc-inexact")
+
+    assert "I don't have that exact document" not in _answer_text(frames)
+    assert "CREDENTIAL FACTS" in _user_prompt(captured)
+    (tags,) = _named(metrics, "document_request_fell_through")
+    assert tags["reason"] == "credentials"
+    assert tags["found"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_a_credential_follow_up_naming_a_report_is_read_on_its_rewrite(db, monkeypatch, model, metrics):
+    bot, captured = _bot(db, monkeypatch, "cred-doc-follow-up", retrieved=(PLAIN_PAGE,))
+    _catalog(monkeypatch, SOC_DATASHEET)
+
+    async def fake_resolve(session_id, question, history, bid, cid, company_name, embedding_profile=None):
+        return "can Acme share its SOC 2 type 2 report", None
+
+    monkeypatch.setattr(rs, "_resolve_search_query_and_embedding", fake_resolve)
+
+    frames = await _drive_stream(bot, "can u share the report pls", "cred-doc-follow-up")
+
+    assert NO_FILE_REPLY not in _answer_text(frames)
+    assert "- SOC 2: not stated anywhere in the reference information." in _user_prompt(captured)
+    assert _named(metrics, "document_request_fell_through")[0]["reason"] == "credentials"
+
+
+@pytest.mark.asyncio
+async def test_a_credential_question_with_the_exact_report_in_the_catalog_still_gets_the_file(
+    db, monkeypatch, model, metrics, document_classifier
+):
+    bot, captured = _bot(db, monkeypatch, "cred-doc-exact", retrieved=(PLAIN_PAGE,))
+    _catalog(monkeypatch, SOC_2_REPORT, BREACH_REPORT)
+
+    frames = await _drive_stream(bot, "can u share your SOC 2 type 2 report", "cred-doc-exact")
+
+    assert document_classifier.calls == ["can u share your SOC 2 type 2 report"]
+    assert _final_meta(frames)["media_card"]["url"] == SOC_2_REPORT
+    assert captured["prompts"] == []
+    assert _named(metrics, "document_request_fell_through") == []

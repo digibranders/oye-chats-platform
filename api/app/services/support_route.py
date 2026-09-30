@@ -66,6 +66,7 @@ import re
 from bisect import bisect_right
 from typing import TYPE_CHECKING
 
+from app.core.langfuse_client import redact_secrets
 from app.db.repository import get_lead_info_by_session
 from app.services import runtime_config
 from app.services.email_service import get_notification_recipients, get_reply_to_address, send_handoff_request_email
@@ -832,7 +833,7 @@ def alert_team_of_support_request(
       request, so a tap opens the conversation.
 
     The visitor's name and contact come from the stored lead, never from the
-    message, which is quoted in the email as it was written.
+    message, which is quoted in the email as it was written, secrets scrubbed.
     """
     bot_id = getattr(bot, "id", None)
     bot_name = getattr(bot, "name", None)
@@ -863,7 +864,8 @@ def alert_team_of_support_request(
             logger.warning("support_request_notification_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
             session.rollback()
 
-    reason = (visitor_message or "").strip()[:_SUPPORT_EMAIL_MESSAGE_LIMIT]
+    # Secrets are scrubbed before the cut, so a truncated key never survives it.
+    reason = (redact_secrets(visitor_message) or "").strip()[:_SUPPORT_EMAIL_MESSAGE_LIMIT]
     for recipient in recipients:
         try:
             send_handoff_request_email(

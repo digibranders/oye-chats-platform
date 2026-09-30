@@ -13,9 +13,11 @@ repeat itself when the visitor asks again.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
-from app.services.handoff_reply import handoff_reply, unhelped_offer
+from app.services.handoff_reply import handoff_reply, handoff_waiting_reply, requested_thing, unhelped_offer
 from app.services.intent_service import bot_offers_handoff
 from app.services.urgent_route import urgent_reply
 
@@ -25,6 +27,11 @@ _ALL = [(available, repeat) for available in (True, False) for repeat in (False,
 def _every_fixed_handoff_text() -> list[str]:
     """Every reply the three fixed-wording routes can send, across all their flags."""
     texts = [handoff_reply(team_available=available, repeat=repeat) for available, repeat in _ALL]
+    texts += [
+        handoff_reply(team_available=available, repeat=True, request="the escalation matrix")
+        for available in (True, False)
+    ]
+    texts += [handoff_waiting_reply(team_available=available) for available in (True, False)]
     texts += [
         unhelped_offer(live_chat_enabled=live, team_available=available).text
         for live in (True, False)
@@ -135,3 +142,166 @@ class TestTheWordsMatchTheForm:
         assert "—" not in text and "–" not in text
         assert "human team" not in text
         assert "our team" in text.lower()
+
+
+class TestARepeatAcknowledgesWhatTheVisitorJustSaid:
+    """Evaluation 2026-09-28: "hello?? nobody is replying" after the form got "The
+    form is just below." with the wait unacknowledged (x-human-nobody-replying,
+    both bots), and "i need the escalation matrix now" after the support reply got
+    the same line with the request unacknowledged (x-support-escalation, both)."""
+
+    def test_the_waiting_reply_says_sorry_for_the_wait_and_points_at_the_form(self):
+        assert handoff_waiting_reply(team_available=False) == (
+            "Sorry for the wait, nobody has picked this up yet. "
+            "The form is just below. Share your details there and I'll pass them to our team."
+        )
+        assert handoff_waiting_reply(team_available=True) == (
+            "Sorry for the wait, nobody has picked this up yet. "
+            "The form is just below. Share your details there and I'll connect you with our team."
+        )
+
+    @pytest.mark.parametrize("available", [True, False])
+    def test_the_waiting_reply_closes_on_an_offer_and_never_calls_the_team_offline(self, available):
+        text = handoff_waiting_reply(team_available=available)
+        assert bot_offers_handoff(text)
+        for word in ("offline", "away", "unavailable"):
+            assert word not in text.lower(), word
+        assert text.endswith(handoff_reply(team_available=available, repeat=True))
+
+    def test_a_new_request_after_the_form_is_named(self):
+        assert handoff_reply(team_available=False, repeat=True, request="the escalation matrix") == (
+            "I've added your request for the escalation matrix to what the team will see. "
+            "The form is just below. Share your details there and I'll pass them to our team."
+        )
+        assert handoff_reply(team_available=True, repeat=True, request="the escalation matrix") == (
+            "I've added your request for the escalation matrix to what the team will see. "
+            "The form is just below. Share your details there and I'll connect you with our team."
+        )
+
+    @pytest.mark.parametrize("available", [True, False])
+    def test_the_named_request_closes_on_an_offer(self, available):
+        assert bot_offers_handoff(handoff_reply(team_available=available, repeat=True, request="a callback"))
+
+    @pytest.mark.parametrize("available", [True, False])
+    def test_a_request_is_only_named_on_a_repeat(self, available):
+        """The first offer already answers the request with the form."""
+        assert handoff_reply(team_available=available, repeat=False, request="the escalation matrix") == (
+            handoff_reply(team_available=available, repeat=False)
+        )
+
+    @pytest.mark.parametrize("available", [True, False])
+    def test_no_request_keeps_the_plain_repeat(self, available):
+        for request in (None, "", "   "):
+            assert handoff_reply(team_available=available, repeat=True, request=request) == handoff_reply(
+                team_available=available, repeat=True
+            )
+
+    @pytest.mark.parametrize("text", _every_fixed_handoff_text())
+    def test_no_dashes_in_any_fixed_reply(self, text):
+        assert "\u2014" not in text and "\u2013" not in text, text
+
+
+class TestRequestedThing:
+    """What a repeat message asks for, in the visitor's own words, or None when it
+    asks for a person again or names nothing the reply could repeat."""
+
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("i need the escalation matrix now", "the escalation matrix"),
+            ("I need the escalation matrix NOW!!", "the escalation matrix"),
+            ("ok so i need the escalation matrix asap please", "the escalation matrix"),
+            ("can you send me the SLA document please", "the SLA document"),
+            ("could someone share an onboarding checklist", "an onboarding checklist"),
+            ("we need a copy of the contract", "a copy of the contract"),
+            ("i want a refund", "a refund"),
+            ("send me the invoice for march", "the invoice for march"),
+            ("we are looking for a quote for 50 seats", "a quote for 50 seats"),
+            ("i'd like the audit report, thanks", "the audit report"),
+            ("i need my invoice for order 12345", "my invoice for order 12345"),
+            ("we want our onboarding plan", "our onboarding plan"),
+        ],
+    )
+    def test_a_request_is_named_in_the_visitor_words(self, message, expected):
+        assert requested_thing(message) == expected
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "connect me to someone from sales",
+            "connect me",
+            "i need to talk to a human",
+            "i want to speak with the team",
+            "get me a person",
+            "can i talk to someone",
+            "i need a human",
+            "escalate this",
+            "please escalate",
+            "hello?? nobody is replying",
+            "escalation matrix?",
+            "the escalation matrix please",
+            "yes",
+            "",
+            "   ",
+            None,
+            42,
+            "i need " + "x" * 200,
+            "i need the full list of everything you have ever done for every customer in every region since 2010",
+        ],
+    )
+    def test_a_person_ask_a_bare_noun_or_nothing_names_no_request(self, message):
+        assert requested_thing(message) is None
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # A secret: naming it would undo the redaction of the stored message.
+            "i need my api key sk_live_abcdefghij1234567 reset",
+            "i need the key AKIAIOSFODNN7EXAMPLE rotated",
+            # Abuse is never repeated back.
+            "i need a refund you useless piece of shit bot",
+            "i want a refund from this garbage bot",
+            "i need the fucking invoice",
+            # "your request for to cancel my subscription" is not a sentence.
+            "i need to cancel my subscription today",
+            "we want to upgrade our plan",
+            # A card, account or phone number.
+            "i need a refund on card 4111 1111 1111 1111",
+            "i need a refund on card 4111111111111111",
+            "i want a callback on 98765-43210",
+            "we need the statement for account 123456",
+            # A promise, or words about the company, put in the bot's mouth.
+            "i need a free lifetime licence promised by your CEO",
+            "i want the discount you guaranteed",
+            "i need the refund i was promised",
+            "could someone share your onboarding checklist",
+            "send me the discount u owe me",
+            # Not a plain noun phrase.
+            "hi, i need help with the portal login",
+            "i need it",
+            "i want this fixed",
+            "send me everything",
+        ],
+    )
+    def test_nothing_unsafe_or_ungrammatical_is_repeated_back(self, message):
+        """Review 2026-09-30: the reply and the stored message echoed the
+        visitor's words unread, a live API key and abuse among them."""
+        assert requested_thing(message) is None
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "i need " * 5000,
+            "i need the " + "1 " * 5000,
+            "i need the " + "f" * 5000,
+            "i need the " + "shit" * 3000,
+            "i need the key " + "sk_live_" * 2000,
+            "please " * 5000 + "send me the brochure",
+            "i need the brochure " + "now " * 5000,
+            "can you " * 3000 + "x",
+        ],
+    )
+    def test_it_is_linear_on_long_input(self, message):
+        started = time.perf_counter()
+        requested_thing(message)
+        assert time.perf_counter() - started < 0.5
