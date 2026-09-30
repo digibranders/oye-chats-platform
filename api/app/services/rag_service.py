@@ -20,7 +20,7 @@ from sqlalchemy.orm import joinedload
 from app import config
 from app.core.cache import QA_RESPONSE_TTL, cache_delete, cache_get, cache_set, qa_response_key
 from app.core.embedding_profiles import EMBEDDING_PROFILE_LEGACY, normalize_profile, query_task_type
-from app.core.langfuse_client import get_langfuse, langfuse_generation, redact_pii
+from app.core.langfuse_client import get_langfuse, langfuse_generation, redact_pii, redact_secrets
 from app.core.metrics import forward_to_sentry_if_alertable, increment_metric_counter, increment_metric_counter_by
 from app.core.thread_pool import submit_background
 from app.db.models import BANTSignal, Bot, ChatSession, MeetingBooking
@@ -3777,7 +3777,7 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
       visitor who has not joined the queue, and a tap opens the conversation.
 
     The visitor's name and contact come from the stored lead, never from the
-    message, which is quoted in the email as it was written.
+    message, which is quoted in the email as it was written, secrets scrubbed.
 
     Without an email or a phone on the lead, all three say so (the owner's
     report of 2026-09-28: an alert with only a name), and a worker job is
@@ -3818,7 +3818,8 @@ def _alert_team_of_urgent_incident(session, bot, client_id: int, session_id: str
         logger.warning("urgent_incident_notification_failed | bot=%s session=%s", bot_id, session_id, exc_info=True)
         session.rollback()
 
-    reason = (visitor_message or "").strip()[:_URGENT_EMAIL_MESSAGE_LIMIT]
+    # Secrets are scrubbed before the cut, so a truncated key never survives it.
+    reason = (redact_secrets(visitor_message) or "").strip()[:_URGENT_EMAIL_MESSAGE_LIMIT]
     for recipient in recipients:
         try:
             send_handoff_request_email(
@@ -9457,12 +9458,15 @@ async def rag_pipeline_stream(
             # from history. Committing here makes the documented "always
             # persisted" contract true and only risks losing the
             # not-yet-generated bot reply (audit F10).
+            # A pasted secret (an AWS key in a CI log, evaluation 2026-09-28) is
+            # scrubbed from the stored copy: the transcript is read by operators
+            # and later turns, and none of them needs the key itself.
             add_chat_message(
                 session,
                 session_id,
                 client_id=cid,
                 role="user",
-                content=question,
+                content=redact_secrets(question),
                 location=location,
                 device=device,
                 bot_id=bid,
@@ -9648,6 +9652,7 @@ async def rag_pipeline_stream(
                     contact_url=_contact_url,
                     repeat=_urgent_repeat,
                     ask_for_contact=not _urgent_contact_known,
+                    message=question,
                 )
                 _safety_net_metric(
                     "urgent_incident",

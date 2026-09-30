@@ -56,6 +56,7 @@ import re
 from bisect import bisect_right
 from collections.abc import Iterator
 
+from app.core.langfuse_client import contains_secret
 from app.services import runtime_config
 from app.services.handoff_reply import HandoffOffer
 from app.services.llm_service import generate_response_checked
@@ -63,6 +64,43 @@ from app.services.pricing_gate import normalize_url
 from app.services.prompt_fence import neutralise_fence
 
 logger = logging.getLogger(__name__)
+
+# ── Wording the incident itself calls for ─────────────────────────────────────
+#
+# Evaluation 2026-09-28: a visitor who pasted a CI log with AWS keys in it, and
+# a visitor who had not slept and whose boss was blaming them, both got only the
+# priority line. The first needs a first step (revoke the key) and a warning not
+# to paste secrets; the second needs the distress acknowledged. A message in
+# crisis never reaches here: the router's crisis route answers it first.
+
+#: Distress a visitor says about themselves while reporting an incident. Every
+#: branch is literal words joined by bounded gaps, so the search is linear.
+_DISTRESS_RE = re.compile(
+    r"(?i)\b(?:"
+    r"feel(?:ing|s)?\s+(?:really\s+|so\s+|very\s+|pretty\s+|quite\s+|a\s+bit\s+)?"
+    r"(?:low|down|hopeless|awful|terrible|horrible|sick|scared|anxious|depressed|numb|lost|helpless|worthless)"
+    r"|(?:haven'?t|havent|hasn'?t|hasnt|not|no)\s+(?:slept|sleep|sleeping)|can'?t\s+sleep|cant\s+sleep"
+    r"|blam(?:ing|es|ed)\s+me|my\s+fault"
+    r"|panick(?:ing|ed)|freaking\s+out|stressed\s+out|breaking\s+down|in\s+tears|crying|overwhelmed|shaking"
+    r"|terrified|i'?m\s+scared|im\s+scared|hopeless"
+    r"|(?:lose|losing)\s+my\s+job|(?:get|getting|be|been)\s+fired|sacked"
+    r")\b"
+)
+
+
+def carries_distress(question: object) -> bool:
+    """Whether the visitor says they are not coping, on top of the incident. Pure and linear."""
+    return isinstance(question, str) and bool(question) and _DISTRESS_RE.search(question) is not None
+
+
+#: The first line when the message carries a pasted secret: the step to take now,
+#: what the bot cannot do, and not to paste secrets into a chat.
+_CREDENTIAL_LINE = (
+    "I can't check whether they've been used, so revoke or rotate those credentials right now and review the "
+    "account's recent activity. Please don't paste secrets into this chat."
+)
+#: The first clause when the message carries distress: one acknowledgement, no advice.
+_DISTRESS_LINE = "That sounds like a lot to carry, and you don't have to handle it alone."
 
 # ── Stage 1: security-incident vocabulary ─────────────────────────────────────
 #
@@ -1115,6 +1153,7 @@ def urgent_reply(
     contact_url: str | None,
     repeat: bool = False,
     ask_for_contact: bool = False,
+    message: str | None = None,
 ) -> HandoffOffer:
     """The reply to an urgent incident. "Flagged" is only said on a plan whose team gets the alert.
 
@@ -1129,7 +1168,18 @@ def urgent_reply(
     and a visitor under attack may never fill in a form, so the reply also asks
     for a phone number or email in the chat. The next two visitor turns are
     read for one (``rag_service._capture_urgent_contact``). The form stays on offer.
+
+    ``message`` is the visitor's own words. A pasted secret puts the step to
+    take now before the priority line; distress wording puts one acknowledging
+    clause first. Both come on every plan and on a repeat, and neither changes
+    the flags or the closing offer. The reply never repeats the secret: it is
+    read, not quoted.
     """
+    lead = ""
+    if carries_distress(message):
+        lead += f"{_DISTRESS_LINE} "
+    if contains_secret(message):
+        lead += f"{_CREDENTIAL_LINE} "
     co = f"**{company_name}**" if company_name else "the team"
     urgent_link = f" If this is an active incident, don't wait for a reply: {emergency_url}" if emergency_url else ""
     if not support_enabled:
@@ -1137,17 +1187,17 @@ def urgent_reply(
         page = emergency_url or contact_url
         if page:
             return HandoffOffer(
-                text=f"This sounds urgent. Please contact {co} directly: {page}",
+                text=f"{lead}This sounds urgent. Please contact {co} directly: {page}",
                 suggest_handoff=False,
                 needs_message_card=False,
             )
         return HandoffOffer(
-            text=f"This sounds urgent. Please contact {co} directly through their website.",
+            text=f"{lead}This sounds urgent. Please contact {co} directly through their website.",
             suggest_handoff=False,
             needs_message_card=False,
         )
-    flagged = f"This sounds urgent, so I've flagged it to {co} as a priority."
-    already_flagged = f"I've already flagged this to {co} as a priority."
+    flagged = f"{lead}This sounds urgent, so I've flagged it to {co} as a priority."
+    already_flagged = f"{lead}I've already flagged this to {co} as a priority."
     # Every reply that opens a form closes on words ``intent_service.HANDOFF_OFFER_RE``
     # reads as an offer ("connect you with", "the team can contact you"), so an "ok"
     # on the next turn opens the form instead of the router's "Glad that helped".

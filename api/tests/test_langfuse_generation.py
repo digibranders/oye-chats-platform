@@ -1,5 +1,7 @@
 """The shared langfuse_generation helper: no-op when disabled, records when on."""
 
+import time
+
 import pytest
 
 import app.core.langfuse_client as lc
@@ -110,6 +112,94 @@ class TestRedactPii:
     def test_never_raises_on_redaction_error(self, monkeypatch):
         monkeypatch.setattr(lc, "_EMAIL_RE", None)  # .sub() on None blows up
         assert lc.redact_pii("still returns original text") == "still returns original text"
+
+
+class TestRedactSecrets:
+    """Evaluation 2026-09-28 (w-secret-pasted-log): a visitor pasted a CI log with
+    AWS keys in it, and the keys were stored in the transcript and quoted to the
+    team. Secret-shaped tokens are scrubbed wherever the message is kept."""
+
+    AWS_LOG = (
+        "our github actions log was public for 2 days and it had this:\n"
+        "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n"
+        "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"
+        "can u check if someone used it? what do we do now"
+    )
+
+    def test_the_pasted_aws_log_keeps_its_words_and_loses_its_keys(self):
+        redacted = lc.redact_secrets(self.AWS_LOG)
+        assert "AKIAIOSFODNN7EXAMPLE" not in redacted
+        assert "wJalrXUtnFEMI" not in redacted
+        assert redacted.startswith("our github actions log was public for 2 days and it had this:\n")
+        assert "AWS_ACCESS_KEY_ID=[REDACTED_SECRET]" in redacted
+        assert "AWS_SECRET_ACCESS_KEY=[REDACTED_SECRET]" in redacted
+        assert redacted.endswith("can u check if someone used it? what do we do now")
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("the key is AKIAIOSFODNN7EXAMPLE ok", "the key is [REDACTED_SECRET] ok"),
+            ("temp creds ASIAIOSFODNN7EXAMPLE expired", "temp creds [REDACTED_SECRET] expired"),
+            ("password: hunter2hunter2", "password: [REDACTED_SECRET]"),
+            ('api_key = "sk_' + 'live_4eC39HqLyjWDarjtT1zdp7dc"', 'api_key = "[REDACTED_SECRET]"'),
+            ("token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij12", "token=[REDACTED_SECRET]"),
+            ("slack xoxb-123456789012-abcdefghij", "slack [REDACTED_SECRET]"),
+            ("google AIzaSyA1234567890abcdefghijklmnopqrstuv", "google [REDACTED_SECRET]"),
+            (
+                "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+                "jwt [REDACTED_SECRET]",
+            ),
+            (
+                "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\nplease help",
+                "[REDACTED_SECRET]\nplease help",
+            ),
+        ],
+    )
+    def test_secret_shapes_are_replaced(self, text, expected):
+        assert lc.redact_secrets(text) == expected
+        assert lc.contains_secret(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "what is your password policy",
+            "the secret to good security is training",
+            "our token budget is 5000 per month",
+            "we need a new api key for the integration",
+            "password = abc",
+            "meet at 2026-07-08, token: yes",
+            "AKIA is the prefix aws uses",
+            "",
+        ],
+    )
+    def test_ordinary_text_is_left_alone(self, text):
+        assert lc.redact_secrets(text) == text
+        assert lc.contains_secret(text) is False
+
+    def test_none_and_non_text(self):
+        assert lc.redact_secrets(None) is None
+        assert lc.contains_secret(None) is False
+        assert lc.contains_secret(42) is False
+
+    def test_redact_pii_scrubs_secrets_too(self):
+        assert lc.redact_pii("mail jane@example.com key AKIAIOSFODNN7EXAMPLE") == (
+            "mail [REDACTED_EMAIL] key [REDACTED_SECRET]"
+        )
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "password=" * 5000,
+            "-----BEGIN PRIVATE KEY-----" * 2000,
+            "AKIA" + "A" * 50000,
+            "secret " * 10000 + "= " + "x" * 10000,
+            "a" * 30000 + "=" + "b" * 30000,
+        ],
+    )
+    def test_redaction_is_linear_on_long_input(self, text):
+        started = time.perf_counter()
+        lc.redact_secrets(text)
+        assert time.perf_counter() - started < 0.5
 
 
 def test_generation_prompt_is_redacted_before_being_sent_as_input(monkeypatch):
