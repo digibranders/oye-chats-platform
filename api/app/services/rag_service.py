@@ -6881,7 +6881,12 @@ def _state_with_current_turn(
 # colleague, themselves). Production, CleanStart, 2026-09-28 (w-recap-for-boss):
 # "summarise this for my boss" got a qualifying question. A recap needs a verb
 # AND something that anchors it to the conversation, so "do you have a summary
-# of your services?" stays an ordinary product question.
+# of your services?" and "can you summarise what your SOC service includes" stay
+# ordinary product questions. The anchors are the conversation itself ("this
+# chat", "so far", "the above"), what was said in it ("what we discussed",
+# "what you told me") and who it is for ("for my boss", "to my manager").
+# Review 2026-09-30: the w-recap-for-boss message itself, "ok summarise what you
+# told me in 3 short bullets, ill fwd it to my boss", matched no anchor.
 _RECAP_VERB_RE = re.compile(
     r"(?i)\b(?:summari[sz]e|summary|recap|sum (?:it |this |that |everything |all |it all )?up|tl;?dr|rundown|wrap[- ]?up|overview)\b"
 )
@@ -6890,11 +6895,14 @@ _RECAP_ANCHOR_RE = re.compile(
     r"\b(?:this|that|our|the|whole|entire)\s+(?:chat|conversation|discussion|thread|exchange)\b"
     r"|\bwhat we(?:'ve| have)?\s+(?:discussed|covered|talked about|said|gone over)\b"
     r"|\b(?:everything|all)\s+(?:of\s+)?(?:this|that|so far|above|we(?:'ve| have)?\s+(?:discussed|covered|talked about))\b"
+    r"|\bwhat\s+(?:you|u)(?:'ve|\s+have)?\s+(?:just\s+)?"
+    r"(?:told\s+(?:me|us)|said|mentioned|explained|shared|covered|listed|wrote)\b"
     r"|\bso far\b"
-    r"|\bfor my (?:boss|manager|team|ceo|cto|director|colleagues?|lead|head|client)\b"
+    r"|\bthe above(?![\w-])"
+    r"|\b(?:for|to|with) my (?:boss|manager|team|ceo|cto|director|colleagues?|lead|head|client)\b"
     r"|\b(?:summari[sz]e|recap|sum up)\s+(?:this|that|it|everything|all this|all that)\b"
     r"|\bsum (?:it|this|that|everything|it all|all this|all that) up\b"
-    r"|^\s*tl;?dr\s*[?!.]*\s*$"
+    r"|^\s*tl;?dr[\s?!.]*$"
     r")"
 )
 

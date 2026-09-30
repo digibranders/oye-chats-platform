@@ -132,6 +132,16 @@ class TestRecapTurnDetection:
             "give me a quick recap of this conversation",
             "tl;dr",
             "sum it all up in a few lines I can forward to my manager",
+            # Review 2026-09-30: the w-recap-for-boss message itself was missed.
+            "ok summarise what you told me in 3 short bullets, ill fwd it to my boss",
+            "summarize the above",
+            "recap what you told me",
+            "can u recap what you've said",
+            "quick summary of what you just explained pls",
+            "give me a rundown so far",
+            "write a short summary i can send to my manager",
+            "summarise all of the above in two lines",
+            "need an overview i can share with my team",
         ],
     )
     def test_recap_requests(self, text):
@@ -144,6 +154,10 @@ class TestRecapTurnDetection:
             "what does your SOC service include?",
             "about 3 months",
             "can you recap the pricing tiers on your website?",
+            "can you summarise what your SOC service includes",
+            "what you told me earlier was wrong",
+            "send this to my boss",
+            "is there an overview of the above-ground sensors",
         ],
     )
     def test_ordinary_questions(self, text):
@@ -320,6 +334,10 @@ class TestTheDetectorsAreLinear:
             pytest.param("summarise " * 500, id="summarise"),
             pytest.param("sum it " * 700, id="sum-it"),
             pytest.param("everything we have " * 260, id="everything-we-have"),
+            pytest.param("what you have " * 350, id="what-you-have"),
+            pytest.param("to my " * 830, id="to-my"),
+            pytest.param("tldr" + " " * 4990 + "x", id="tldr-then-spaces"),
+            pytest.param("what" + " " * 4990 + "x", id="what-then-spaces"),
         ],
     )
     @pytest.mark.parametrize("dimension", ["timeline", "authority", "budget"])
@@ -391,6 +409,18 @@ class TestPipelinePassesTheSessionFlags:
     async def test_a_recap_turn_reaches_the_prompt(self, db, monkeypatch):
         prompt = await self._prompt_for(db, monkeypatch, "sess-f22-recap", "summarise this for my boss")
         assert "Do NOT ask a qualifying question this turn" in prompt
+
+    @pytest.mark.asyncio
+    async def test_the_recap_for_boss_message_reaches_the_prompt(self, db, monkeypatch):
+        """Production, 2026-09-28 (w-recap-for-boss), the message as it was typed."""
+        prompt = await self._prompt_for(
+            db,
+            monkeypatch,
+            "sess-f22-recap-boss",
+            "ok summarise what you told me in 3 short bullets, ill fwd it to my boss",
+        )
+        assert "Do NOT ask a qualifying question this turn" in prompt
+        assert "asked for a summary or recap of this conversation" in prompt
 
     @pytest.mark.asyncio
     async def test_a_normal_turn_still_probes(self, db, monkeypatch):
