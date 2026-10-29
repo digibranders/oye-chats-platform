@@ -289,7 +289,7 @@ platform/
 | Rate limiting | SlowAPI on Redis |
 | Observability | Sentry · Langfuse (enabled whenever both keys are set; `LANGFUSE_FORCE_DISABLE=true` is the kill switch) |
 | CDN | Cloudflare R2 + CDN — `cdn.oyechats.com/oyechats-widget.js` |
-| Deploy | DigitalOcean droplet · systemd · Nginx · GitHub Actions (`ci.yml`, `deploy-api.yml`, `deploy-widget.yml`, `deploy-app.yml`) |
+| Deploy | Hostinger VPS · systemd · Nginx · pull-model autodeploy timer · GitHub Actions (`ci.yml`, `deploy-widget.yml`, `deploy-app.yml`) |
 | Dependency mgmt | `uv` (Python) + `npm` (JavaScript) |
 | Containerisation | Docker + Docker Compose (local dev only) |
 

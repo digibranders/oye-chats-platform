@@ -5,7 +5,7 @@ name: Deploy Admin Dashboard
 # Vercel used to deploy this project itself, on its Git integration, the moment
 # main moved. That put the dashboard and the API in a race the dashboard
 # usually won: Vercel builds a Vite SPA in a couple of minutes, while
-# `deploy-api.yml` runs the full CI suite, migrates the database over SSH and
+# the backend deploy (a pull-model timer on the VPS) runs migrations and
 # then waits for `/health/full` to come back green. A release that added an
 # endpoint therefore put a dashboard live against a backend that did not have
 # it yet, and every user in that window got 404s from a screen that looked fine.
@@ -29,11 +29,9 @@ on:
     paths: ['app/**', '.github/workflows/deploy-app.yml']
   workflow_dispatch:
 
-# `actions: read` is what lets the wait job see the backend workflow's run.
 # Nothing here writes to the repository.
 permissions:
   contents: read
-  actions: read
 
 # Two pushes in quick succession must not deploy out of order. Queued rather
 # than cancelled: a superseded run still has to release its slot cleanly, and
@@ -49,104 +47,59 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  # Runs beside `ci` rather than after it, so the wait overlaps the suite
+  # Runs beside `ci` rather than after it, so the hold overlaps the suite
   # instead of following it. `deploy` needs both.
+  #
+  # The backend now deploys itself on the VPS: oyechats-autodeploy.timer looks
+  # for a new commit on main every 5 minutes, migrates, restarts and gates on
+  # /health/full (see vps-setup/oyechats/README.md). Nothing here can see that
+  # run, so a push that touched `api/**` holds the dashboard for a fixed
+  # window and then requires a healthy backend.
+  # shortcut: cannot tell the new release from the old one or notice a
+  # rollback; if the dashboard ever ships against a rolled-back backend,
+  # expose the live release SHA on /health and compare it with this commit.
   wait-for-backend:
     name: Wait for the backend deploy
     runs-on: ubuntu-latest
-    # The backend's own deploy is ~15 minutes on a bad day: CI, then migrations,
-    # then the health gate and its retries.
-    timeout-minutes: 50
+    timeout-minutes: 30
     steps:
-      - name: Wait for the backend deploy of this commit
+      - name: Hold until the backend of this commit should be live
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
 
-          WORKFLOW='deploy-api.yml'
-          # A run triggered by the same push as this one is created within
-          # seconds. One that has not appeared by now is one that is never
-          # coming: the commit did not touch `api/**`, so there is no backend
-          # deploy to wait for and the dashboard may ship on its own.
-          GRACE_SECONDS=120
-          # Also the window in which a FAILED backend deploy may be re-run and
-          # still carry the dashboard with it. See the failure branch below.
-          DEADLINE_SECONDS=2400
+          # Timer period (5 min) plus a migration and the health gate.
+          HOLD_SECONDS=720
+          HEALTH_DEADLINE_SECONDS=600
+
+          # A manual run or a first push has no usable `before`: nothing to compare.
+          touched=0
+          if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != '0000000000000000000000000000000000000000' ]; then
+            touched=$(gh api "repos/${REPO}/compare/${BEFORE}...${SHA}" \
+              --jq '[.files[].filename | select(startswith("api/"))] | length')
+          fi
+          if [ "$touched" -eq 0 ]; then
+            echo "This push does not touch api/**: no backend deploy to wait for."
+            exit 0
+          fi
+
+          echo "api/** changed (${touched} files). Holding ${HOLD_SECONDS}s for the VPS autodeploy."
+          sleep "$HOLD_SECONDS"
+
           started=$SECONDS
-          reported_failure=''
-
-          while :; do
-            # A transient API failure must not fail the deploy, so a failed
-            # read is treated as "nothing yet" and retried.
-            run=$(gh api \
-              "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?head_sha=${SHA}&per_page=100" \
-              --jq '.workflow_runs | sort_by(.created_at) | last // empty' 2>/dev/null || echo '')
-
-            if [ -n "$run" ]; then
-              status=$(jq -r '.status' <<<"$run")
-              conclusion=$(jq -r '.conclusion // ""' <<<"$run")
-              url=$(jq -r '.html_url' <<<"$run")
-
-              if [ "$status" = 'completed' ]; then
-                case "$conclusion" in
-                  success|skipped)
-                    echo "Backend deploy ${conclusion}. Dashboard may ship: ${url}"
-                    exit 0
-                    ;;
-                  *)
-                    # `deploy-api.yml` rolls the droplet back to the previous
-                    # healthy release when it fails, so what is live right now
-                    # is the OLD backend. Shipping a new dashboard against it
-                    # is the exact breakage this workflow exists to prevent.
-                    #
-                    # But this is NOT the end of the story, and treating it as
-                    # one stranded the dashboard for eleven hours on 2026-09-01:
-                    # the backend deploy failed at 17:58, this gate read that
-                    # conclusion eleven seconds later and exited, the backend was
-                    # re-run and went green at 18:16, and nothing re-triggered
-                    # the dashboard. `deploy-app.yml` fires on `push`, and a
-                    # re-run is not a push, so the console silently sat on the
-                    # previous build until the next merge. Referral attribution
-                    # shipped its backend half and not its frontend half.
-                    #
-                    # So a failure is reported once and then WAITED OUT. A
-                    # re-run reuses the same run id with a fresh attempt, so the
-                    # poll below sees it go back to `in_progress` and then to
-                    # `success` on its own. If no re-run comes, the deadline
-                    # below still fails the job.
-                    if [ "$reported_failure" != "$conclusion" ]; then
-                      echo "::warning::Backend deploy concluded '${conclusion}'; the droplet has rolled back, so the dashboard is held. Re-run it within the deadline and this job will pick the re-run up and ship. ${url}"
-                      reported_failure="$conclusion"
-                    fi
-                    ;;
-                esac
-              else
-                # Only while it is genuinely still running. A completed-but-
-                # failed run is waiting on a human to re-run it, and the warning
-                # above already said so once; repeating it every 15s for the
-                # rest of the deadline buries it.
-                echo "Backend deploy is ${status}; waiting. ${url}"
-              fi
-            elif [ $((SECONDS - started)) -ge $GRACE_SECONDS ]; then
-              echo "No backend deploy for ${SHA} after ${GRACE_SECONDS}s: this commit does not touch api/**. Proceeding."
-              exit 0
-            else
-              echo "No backend deploy yet; inside the ${GRACE_SECONDS}s grace period."
-            fi
-
-            if [ $((SECONDS - started)) -ge $DEADLINE_SECONDS ]; then
-              if [ -n "$reported_failure" ]; then
-                echo "::error::Backend deploy concluded '${reported_failure}' and was not re-run successfully within ${DEADLINE_SECONDS}s. The droplet is on the previous release, so the dashboard must not ship against it. Re-run the backend deploy, then re-run this workflow."
-              else
-                echo "::error::Timed out after ${DEADLINE_SECONDS}s waiting for the backend deploy to finish."
-              fi
+          until curl --silent --fail --max-time 20 https://api.oyechats.com/health/full >/dev/null; do
+            if [ $((SECONDS - started)) -ge $HEALTH_DEADLINE_SECONDS ]; then
+              echo "::error::api.oyechats.com/health/full is not healthy ${HEALTH_DEADLINE_SECONDS}s after the hold; the dashboard stays held."
               exit 1
             fi
+            echo "Backend not healthy yet; retrying."
             sleep 15
           done
+          echo "Backend healthy. Dashboard may ship."
 
   deploy:
     needs: [ci, wait-for-backend]
