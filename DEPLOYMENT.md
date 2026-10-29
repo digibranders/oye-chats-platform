@@ -1,5 +1,13 @@
 # OyeChats — Deployment Guide
 
+> **The backend moved off the DigitalOcean droplet on 2026-10-29.** `api.oyechats.com`, Postgres, Redis, the worker and the
+> WebSocket service now run on a dedicated Hostinger VPS (`srv2107462`, IPv6 `2a02:4780:63:8174::1`), behind Cloudflare. It
+> deploys by itself: a systemd timer checks `main` every minute, migrates, restarts and gates on `/health/full`, with
+> rollback. There is no SSH deploy workflow and the `DO_*` secrets are unused. The server env file is
+> `/srv/oyechats/shared/.env` (no longer rewritten from GitHub secrets: edit it on the server). The install kit and runbook
+> are in `digibranders/firstfold-vps-setup`, folder `oyechats/`. The droplet-specific steps below (Step 1, Step 4, "On the
+> Droplet", the 2026-04 runbooks) describe the retired setup and are kept as history until they are rewritten.
+
 ## Infrastructure Overview
 
 | Service | Domain | Hosted On | Vercel Project | Cost |
@@ -7,9 +15,9 @@
 | Landing Page | `oyechats.com` · `www.oyechats.com` | Vercel | `oyechats-website` | Free |
 | Customer Admin Dashboard | `app.oyechats.com` | Vercel (monorepo, root = `app/`) | `oye-chats-platform` | Free |
 | Super Admin Console | `admin.oyechats.com` | Vercel (separate repo `digibranders/oyechats-admin`) | `superadmin` | Free |
-| Backend API | `api.oyechats.com` | DigitalOcean Droplet (4 GB / 2 vCPU) | — | see DO billing |
+| Backend API | `api.oyechats.com` | Hostinger VPS `srv2107462` (since 2026-10-29) | — | VPS plan |
 | Widget CDN | `cdn.oyechats.com` | Cloudflare R2 | — | ~$0 |
-| Database | (on droplet) | PostgreSQL 16 + pgvector | — | $0 (included) |
+| Database | (on the VPS) | PostgreSQL 16 + pgvector | — | $0 (included) |
 
 > The droplet was upsized from the 2 GB / 1 vCPU box this file used to describe;
 > confirm the current line item in the DigitalOcean billing panel rather than
@@ -30,7 +38,7 @@ oyechats.com          CNAME   cname.vercel-dns.com   # marketing site
 www.oyechats.com      CNAME   cname.vercel-dns.com   # marketing site
 app.oyechats.com      CNAME   cname.vercel-dns.com   # customer admin dashboard
 admin.oyechats.com    CNAME   cname.vercel-dns.com   # super admin console
-api.oyechats.com      A       <droplet-ip>           # backend
+api.oyechats.com      AAAA    2a02:4780:63:8174::1   # backend (proxied)
 cdn.oyechats.com      CNAME   <r2-public-domain>     # widget CDN
 ```
 
@@ -324,9 +332,7 @@ Set these in **GitHub → Settings → Secrets and variables → Actions**:
 ### Platform Repo (`digibranders/oye-chats-platform`)
 | Secret | Value |
 |--------|-------|
-| `DO_HOST` | Droplet IP address |
-| `DO_USER` | `root` |
-| `DO_SSH_KEY` | Private SSH key (for droplet access) |
+| `DO_HOST`, `DO_USER`, `DO_SSH_KEY` | Unused since 2026-10-29 (the SSH deploy was removed); can be deleted |
 | `DB_URL` | `postgresql://oyechats:<PASSWORD>@localhost:5432/oyechats` |
 | `GOOGLE_API_KEY` | Google Gemini API key (LiteLLM fallback) |
 | `OPENAI_API_KEY` | OpenAI API key (primary LLM) |
@@ -375,11 +381,11 @@ Repository **variables** (not secrets) that change behaviour:
 
 ```
 Push to main
-  ├── api/**    → deploy-api.yml    → CI → SSH to DO → uv sync → alembic → install units
-  │                                  → restart worker, api (and ws, if installed)
-  │                                  → gate on /health/full, else roll back to the previous SHA
+  ├── api/**    → (no workflow)     → the VPS timer pulls main within a minute → uv sync → alembic
+  │                                  → restart worker, api, ws
+  │                                  → gate on /health/full, else roll back to the previous release
   ├── widget/** → deploy-widget.yml → build → verify outputs → upload to R2 → purge mutable files
-  └── app/**    → deploy-app.yml    → WAIT for this commit's deploy-api.yml to go green
+  └── app/**    → deploy-app.yml    → if api/** changed: hold 10 minutes, then wait for /health/full
                                      → fire the Vercel Deploy Hook
 ```
 

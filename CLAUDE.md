@@ -393,7 +393,7 @@ npm install && npm run dev       # Dev server (localhost:3000)
 | Rate limiting | SlowAPI on Redis | Per-route + IP/key |
 | Observability | Langfuse + Sentry | **Two separate Langfuse projects**: "OyeChats Prod" (keys in GitHub Secrets) and "OyeChats Dev" (keys in local `.env`). Traces go to the matching project — no mixing. Toggle via `LANGFUSE_FORCE_DISABLE=true` if needed. |
 | CDN | Cloudflare R2 | `cdn.oyechats.com/oyechats-widget.js` |
-| CI/CD | GitHub Actions | `ci.yml`, `deploy-api.yml`, `deploy-widget.yml`, `deploy-app.yml` |
+| CI/CD | GitHub Actions | `ci.yml`, `deploy-widget.yml`, `deploy-app.yml` (the API deploys by a pull-model timer on the VPS, not by Actions) |
 | Dependency Mgmt | uv (Python) + npm (JavaScript) | |
 
 ## Skill routing
