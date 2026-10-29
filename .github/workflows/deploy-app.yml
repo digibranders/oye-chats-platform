@@ -51,7 +51,7 @@ jobs:
   # instead of following it. `deploy` needs both.
   #
   # The backend now deploys itself on the VPS: oyechats-autodeploy.timer looks
-  # for a new commit on main every 5 minutes, migrates, restarts and gates on
+  # for a new commit on main every minute, migrates, restarts and gates on
   # /health/full (see vps-setup/oyechats/README.md). Nothing here can see that
   # run, so a push that touched `api/**` holds the dashboard for a fixed
   # window and then requires a healthy backend.
@@ -72,8 +72,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Timer period (5 min) plus a migration and the health gate.
-          HOLD_SECONDS=720
+          # One timer tick plus uv sync, a migration and the health gate.
+          HOLD_SECONDS=600
           HEALTH_DEADLINE_SECONDS=600
 
           # A manual run or a first push has no usable `before`: nothing to compare.

@@ -2,7 +2,7 @@
 
 > **The backend moved off the DigitalOcean droplet on 2026-10-29.** `api.oyechats.com`, Postgres, Redis, the worker and the
 > WebSocket service now run on a dedicated Hostinger VPS (`srv2107462`, IPv6 `2a02:4780:63:8174::1`), behind Cloudflare. It
-> deploys by itself: a systemd timer checks `main` every 5 minutes, migrates, restarts and gates on `/health/full`, with
+> deploys by itself: a systemd timer checks `main` every minute, migrates, restarts and gates on `/health/full`, with
 > rollback. There is no SSH deploy workflow and the `DO_*` secrets are unused. The server env file is
 > `/srv/oyechats/shared/.env` (no longer rewritten from GitHub secrets: edit it on the server). The install kit and runbook
 > are in `digibranders/firstfold-vps-setup`, folder `oyechats/`. The droplet-specific steps below (Step 1, Step 4, "On the
@@ -381,11 +381,11 @@ Repository **variables** (not secrets) that change behaviour:
 
 ```
 Push to main
-  ├── api/**    → (no workflow)     → the VPS timer pulls main within 5 minutes → uv sync → alembic
+  ├── api/**    → (no workflow)     → the VPS timer pulls main within a minute → uv sync → alembic
   │                                  → restart worker, api, ws
   │                                  → gate on /health/full, else roll back to the previous release
   ├── widget/** → deploy-widget.yml → build → verify outputs → upload to R2 → purge mutable files
-  └── app/**    → deploy-app.yml    → if api/** changed: hold 12 minutes, then wait for /health/full
+  └── app/**    → deploy-app.yml    → if api/** changed: hold 10 minutes, then wait for /health/full
                                      → fire the Vercel Deploy Hook
 ```
 
